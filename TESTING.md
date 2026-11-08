@@ -125,8 +125,15 @@ Issues found and fixed during testing:
 Not verified:
 
 - The result shown when already up to date: the second check reached the feed, but the dialog was not observed.
-- An update from the real GitHub feed (checked separately after publishing, see below).
 - Updating a copy installed in /Applications, or by a non-admin user.
 - Whether Sparkle itself relaunched the app, or my test harness reopened it.
 - Gatekeeper behavior for a first install on a machine that never ran this build. Builds are ad-hoc signed and not notarized; Developer ID signing and notarization are untested.
 - Skipping a version, interrupted downloads and a tampered archive were not exercised.
+
+### After publishing the v1.4.0 release
+
+- The feed fetched through GitHub's `releases/latest/download/appcast.xml` redirect is byte-identical to the appcast that was signed, and the download URL inside it returns a zip byte-identical to the signed archive. Tag `v1.4.0` points at commit `05dcd1a`.
+- Real-feed update: the shipped 1.4.0 app was relabelled 1.3.9 (build 4), re-signed ad-hoc and kept the real feed URL and bundle ID. Check for Updates offered "Muxie 1.4.0 is now available—you have 1.3.9", downloaded the archive from GitHub, verified it and installed it. Afterwards the app on disk was 1.4.0 (build 5), its signature verified, it carried no quarantine attributes, and its executable and Info.plist were byte-identical to the GitHub release.
+- Checking again from 1.4.0 opened a small untitled alert window, which is consistent with Sparkle's "up to date" message. The window could not be read by the automation, so its text is not confirmed.
+- The test run wrote two Sparkle keys into the app's preferences domain; they were deleted afterwards.
+
