@@ -4,3 +4,7 @@ dist/
 *.dmg
 *.app/
 .swiftpm/
+
+Support/.tmp/
+Support/.module-cache/
+Support/.AppIcon.iconset/
