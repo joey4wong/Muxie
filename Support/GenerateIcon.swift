@@ -60,8 +60,10 @@ guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
 let canvas = try bitmap(1024)
 // A white rounded-square macOS tile, 64 px transparent margin on every side.
 // Fit the FULL source inside the 896 px tile, preserving its aspect ratio.
-// Its existing white border supplies all internal spacing: no extra inset,
-// no crop, recoloring, new decoration, or reconstruction of the glass knot.
+// The supplied non-square image is centered using aspect-fit, never stretched.
+// Its existing border supplies internal spacing; add no further white inset.
+// Only white source-background corners meet the tile mask; the full knot stays intact.
+// No artwork generation, recoloring, or reconstruction is performed.
 let tile = CGRect(x: 64, y: 64, width: 896, height: 896)
 let tilePath = CGPath(roundedRect: tile, cornerWidth: 200, cornerHeight: 200, transform: nil)
 let scale = min(tile.width / CGFloat(artwork.width), tile.height / CGFloat(artwork.height))
@@ -114,12 +116,37 @@ guard let decodedFamily = CGImageSourceCreateWithData(family as CFData, nil),
     throw IconError("ICNS family cannot decode")
 }
 let decodedCount = CGImageSourceGetCount(decodedFamily)
+guard decodedCount == representations.count else {
+    throw IconError("Expected \(representations.count) ICNS representations, got \(decodedCount)")
+}
 for index in 0..<decodedCount {
     guard CGImageSourceCreateImageAtIndex(decodedFamily, index,
         [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) != nil else {
         throw IconError("ICNS representation \(index) cannot decode")
     }
 }
+// Independently parse and decode every embedded PNG from the finished ICNS.
+func readLength(_ bytes: Data, at offset: Int) -> Int {
+    bytes[offset..<(offset + 4)].reduce(0) { ($0 << 8) | Int($1) }
+}
+guard readLength(family, at: 4) == family.count else {
+    throw IconError("ICNS container length is invalid")
+}
+var offset = 8
+for (type, size, _) in representations {
+    guard offset + 8 <= family.count,
+          String(data: family[offset..<(offset + 4)], encoding: .ascii) == type else {
+        throw IconError("Missing ICNS chunk \(type)")
+    }
+    let length = readLength(family, at: offset + 4)
+    guard length >= 8, offset + length <= family.count else {
+        throw IconError("Invalid ICNS chunk length for \(type)")
+    }
+    _ = try decodedPNG(Data(family[(offset + 8)..<(offset + length)]), expectedSize: size)
+    offset += length
+}
+guard offset == family.count else { throw IconError("Unexpected trailing ICNS data") }
+
 try masterPNG.write(to: directory.appendingPathComponent("AppIcon.png"), options: .atomic)
 try family.write(to: directory.appendingPathComponent("AppIcon.icns"), options: .atomic)
 print("Source: \(artwork.width) x \(artwork.height); full-image fit, scale \(scale)")

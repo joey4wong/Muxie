@@ -10,7 +10,7 @@ import AppKit
     var body: some Scene {
         Window("Muxie", id: "main") {
             ContentView().environmentObject(model)
-                .frame(minWidth: model.sources.isEmpty ? 380 : 520, idealWidth: 760, minHeight: model.sources.isEmpty ? 280 : 360, idealHeight: 520)
+                .frame(minWidth: model.sources.isEmpty ? 380 : 520, idealWidth: 760, minHeight: model.minimumContentHeight, idealHeight: 520)
                 .onOpenURL { url in Task { await model.importFiles([url]) } }
                 .alert("Unable to Complete", isPresented: $model.showError) {
                     Button("Copy Details") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.error ?? "", forType: .string) }
@@ -21,6 +21,7 @@ import AppKit
         .defaultSize(width: 760, height: 520)
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
+        .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .appInfo) { Button("About Muxie") { model.showAbout = true } }
             CommandGroup(replacing: .newItem) {

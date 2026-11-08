@@ -5,7 +5,18 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-private let accent = Color(red: 0.31, green: 0.38, blue: 0.96)
+private let accent = Color("AccentColor")
+private struct NeutralGlassButtonStyle: ButtonStyle {
+    var compact = true
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.foregroundStyle(.primary)
+            .padding(.horizontal, compact ? 12 : 24)
+            .padding(.vertical, compact ? 6 : 9)
+            .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: compact ? 10 : 18))
+            .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+    }
+}
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var targeted = false
@@ -15,23 +26,28 @@ struct ContentView: View {
             if model.sources.isEmpty {
                 emptyState
             } else {
+                let compactInspector = geometry.size.width < 720 || geometry.size.height - WorkspaceLayout.exportHeight - WorkspaceLayout.activityHeight < 400
                 VStack(spacing: 0) {
-                    HStack(spacing: 0) {
-                        trackList(compact: geometry.size.width < 720)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        if model.active != nil && geometry.size.width >= 720 {
+                    HStack(alignment: .top, spacing: 0) {
+                        trackList(compact: compactInspector)
+                            .frame(maxWidth: .infinity, alignment: .top)
+                        if model.active != nil && !compactInspector {
                             Divider()
-                            ScrollView { inspector }.frame(width: 238)
+                            inspector.frame(width: 238)
                         }
-                    }.frame(height: geometry.size.height * 0.70)
+                    }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
                     Button("Export") { model.exportPanel() }
                         .font(.system(size: 13, weight: .semibold))
                         .padding(.horizontal, 32).padding(.vertical, 7)
-                        .buttonStyle(.glassProminent)
+                        .buttonStyle(NeutralGlassButtonStyle(compact: false))
                         .disabled(!model.canExport)
-                        .padding(.top, 16)
-                    Spacer(minLength: 8)
+                        .frame(height: WorkspaceLayout.exportHeight)
+                    Group {
+                        if model.exporting || model.importing || model.completed != nil { activityBar }
+                        else { Color.clear }
+                    }.frame(height: WorkspaceLayout.activityHeight)
                 }
+
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -45,16 +61,18 @@ struct ContentView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if model.exporting || model.importing || model.completed != nil { activityBar }
-        }
         .sheet(isPresented: $showCompactInspector) {
             VStack(spacing: 0) {
-                HStack { Spacer(); Button("Done") { showCompactInspector = false }.buttonStyle(.glass).keyboardShortcut(.defaultAction) }
+                HStack { Spacer(); Button("Done") { showCompactInspector = false }.buttonStyle(NeutralGlassButtonStyle()).keyboardShortcut(.defaultAction) }
                     .padding(.horizontal, 18).padding(.top, 16)
-                ScrollView { inspector }
-            }.frame(width: 320, height: 320)
+                inspector
+            }.frame(width: 320, height: 420)
         }
+        .onAppear { model.workspaceScreenHeight = NSScreen.main?.visibleFrame.height ?? 900 }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { _ in
+            model.workspaceScreenHeight = NSScreen.main?.visibleFrame.height ?? 900
+        }
+        .onChange(of: model.filter) { _, _ in model.trackPage = 0 }
         .onChange(of: model.sources.isEmpty) { _, empty in if empty { showCompactInspector = false } }
         .overlay {
             if targeted { RoundedRectangle(cornerRadius: 15).strokeBorder(accent, lineWidth: 2).padding(4).allowsHitTesting(false) }
@@ -79,42 +97,54 @@ struct ContentView: View {
             Image(nsImage: NSApplication.shared.applicationIconImage).resizable().interpolation(.high).frame(width: 112, height: 112)
             Button { model.openFiles() } label: {
                 Label("Open Video…", systemImage: "plus").font(.system(size: 13, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 5)
-            }.buttonStyle(.glassProminent).disabled(model.busy)
+            }.buttonStyle(NeutralGlassButtonStyle(compact: false)).disabled(model.busy)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func trackList(compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: WorkspaceLayout.filterGap) {
             HStack(spacing: 3) {
                 ForEach(["All", "Video", "Audio", "Subtitles"], id: \.self) { filter in
-                    Button { withAnimation(.easeInOut(duration: 0.15)) { model.filter = filter } } label: {
+                    Button { model.filter = filter } label: {
                         HStack(spacing: 5) {
                             Text(filter)
                             Text("\(model.tracks.filter { filter == "All" || $0.filterName == filter }.count)")
                                 .font(.system(size: 10, weight: .medium, design: .rounded)).opacity(0.55)
                         }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 11).padding(.vertical, 8)
-                            .foregroundStyle(model.filter == filter ? accent : .secondary)
-                            .background(model.filter == filter ? accent.opacity(0.09) : .clear, in: Capsule())
+                            .foregroundStyle(model.filter == filter ? Color.primary : Color.secondary)
+                            .background(model.filter == filter ? Color.primary.opacity(0.045) : .clear, in: Capsule())
                     }.buttonStyle(.plain)
                 }
                 Spacer(minLength: 0)
-            }.disabled(model.busy)
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(model.filtered) { track in trackRow(track, compact: compact) }
-                    if model.filtered.isEmpty {
-                        Text("No tracks").font(.callout).foregroundStyle(.tertiary).frame(maxWidth: .infinity).padding(.top, 40)
+            }.frame(height: WorkspaceLayout.filterHeight).disabled(model.busy)
+            VStack(spacing: WorkspaceLayout.rowSpacing) {
+                ForEach(model.pagedTracks) { track in trackRow(track, compact: compact) }
+                if model.filtered.isEmpty {
+                    Text("No tracks").font(.callout).foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity).frame(height: WorkspaceLayout.rowHeight)
+                }
+            }.fixedSize(horizontal: false, vertical: true)
+            if model.reservesPagination {
+                HStack(spacing: 16) {
+                    Spacer()
+                    if model.pageCount > 1 {
+                        Button { model.trackPage = max(0, model.currentTrackPage - 1); model.selected = nil } label: { Image(systemName: "chevron.left") }
+                            .disabled(model.currentTrackPage == 0).help("Previous Page")
+                        Text("\(model.currentTrackPage + 1) / \(model.pageCount)").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                        Button { model.trackPage = min(model.pageCount - 1, model.currentTrackPage + 1); model.selected = nil } label: { Image(systemName: "chevron.right") }
+                            .disabled(model.currentTrackPage + 1 >= model.pageCount).help("Next Page")
                     }
-                }.padding(2)
+                    Spacer()
+                }.buttonStyle(.plain).frame(height: WorkspaceLayout.paginationHeight - WorkspaceLayout.filterGap)
             }
-        }.padding(20)
+        }.padding(18)
     }
     private func trackRow(_ track: MediaTrack, compact: Bool) -> some View {
         let selected = track.id == model.selected
         return HStack(spacing: 11) {
             Toggle("Include \(model.displayName(for: track))", isOn: model.boolBinding(track.id, \.enabled)).labelsHidden().toggleStyle(.checkbox)
             Image(systemName: track.symbol).font(.system(size: 17, weight: .medium))
-                .foregroundStyle(track.enabled ? accent : Color.secondary).frame(width: 38, height: 39)
-                .background(accent.opacity(0.065), in: RoundedRectangle(cornerRadius: 10))
+                .foregroundStyle(.secondary).frame(width: 38, height: 39)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 5) {
                 Text(model.displayName(for: track)).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Text(track.codec + (track.detail.isEmpty ? "" : " · " + track.detail)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
@@ -122,11 +152,11 @@ struct ContentView: View {
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 5) {
                 Text(track.language.uppercased()).font(.system(size: 9, weight: .medium, design: .monospaced)).foregroundStyle(.secondary)
-                if track.isDefault { Text("Default").font(.system(size: 9)).foregroundStyle(accent) }
+                if track.isDefault { Text("Default").font(.system(size: 9)).foregroundStyle(.secondary) }
             }
-        }.padding(12).contentShape(RoundedRectangle(cornerRadius: 13))
-            .background(selected ? accent.opacity(0.06) : Color(nsColor: .controlBackgroundColor).opacity(0.45), in: RoundedRectangle(cornerRadius: 13))
-            .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(selected ? accent.opacity(0.4) : .primary.opacity(0.065)))
+        }.padding(.horizontal, 12).frame(height: WorkspaceLayout.rowHeight).contentShape(RoundedRectangle(cornerRadius: 13))
+            .background(selected ? accent.opacity(0.035) : Color(nsColor: .controlBackgroundColor).opacity(0.45), in: RoundedRectangle(cornerRadius: 13))
+            .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(selected ? accent.opacity(0.30) : .primary.opacity(0.065)))
             .opacity(track.enabled || selected ? 1 : 0.72)
             .onTapGesture {
                 model.selected = track.id
@@ -135,16 +165,16 @@ struct ContentView: View {
             .disabled(model.busy)
     }
     private var inspector: some View {
-        VStack(alignment: .leading, spacing: 23) {
+        VStack(alignment: .leading, spacing: 14) {
             if let track = model.active {
                 HStack(spacing: 10) {
-                    Image(systemName: track.symbol).font(.system(size: 21)).foregroundStyle(accent)
+                    Image(systemName: track.symbol).font(.system(size: 21)).foregroundStyle(.secondary)
                         .frame(width: 41, height: 41).glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
                     Text(track.kindName).font(.system(size: 16, weight: .semibold))
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Name").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                    TextField("Track name", text: model.binding(track.id, \.name)).textFieldStyle(.roundedBorder).controlSize(.large)
+                    TextField("Track name", text: model.binding(track.id, \.name)).textFieldStyle(.roundedBorder).controlSize(.regular)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Language").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
@@ -152,7 +182,7 @@ struct ContentView: View {
                         let languages = [("und", "Unspecified"), ("en", "English"), ("zh", "Chinese"), ("zh-Hans", "Chinese (Simplified)"), ("zh-Hant", "Chinese (Traditional)"), ("yue", "Cantonese"), ("ja", "Japanese"), ("ko", "Korean"), ("fr", "French"), ("de", "German"), ("es", "Spanish"), ("it", "Italian"), ("pt", "Portuguese"), ("ru", "Russian")]
                         ForEach(languages, id: \.0) { item in Text(item.1).tag(item.0) }
                         if !languages.contains(where: { $0.0 == track.language }) { Text(track.language).tag(track.language) }
-                    }.labelsHidden().pickerStyle(.menu).controlSize(.large).frame(maxWidth: .infinity, alignment: .leading)
+                    }.labelsHidden().pickerStyle(.menu).controlSize(.regular).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 Divider()
                 Toggle("Default", isOn: model.boolBinding(track.id, \.isDefault)).font(.system(size: 12)).toggleStyle(.switch).controlSize(.small)
@@ -161,7 +191,7 @@ struct ContentView: View {
                 }
             }
             Spacer(minLength: 0)
-        }.padding(22).frame(maxHeight: .infinity, alignment: .topLeading).disabled(model.busy)
+        }.padding(18).frame(maxHeight: .infinity, alignment: .topLeading).disabled(model.busy)
     }
     private var activityBar: some View {
         HStack(spacing: 12) {
@@ -173,16 +203,16 @@ struct ContentView: View {
                 ProgressView(value: model.progress).frame(width: 150)
                 Text("\(Int(model.progress * 100))%").font(.system(size: 11, design: .monospaced)).monospacedDigit()
                 Spacer()
-                Button("Cancel", role: .cancel) { model.job?.cancel() }.buttonStyle(.glass)
+                Button("Cancel", role: .cancel) { model.job?.cancel() }.buttonStyle(NeutralGlassButtonStyle())
             } else if let output = model.completed {
-                Image(systemName: model.warning == nil ? "checkmark.circle.fill" : "exclamationmark.circle.fill").foregroundStyle(model.warning == nil ? .green : .orange)
+                Image(systemName: model.warning == nil ? "checkmark.circle.fill" : "exclamationmark.circle.fill").foregroundStyle(model.warning == nil ? accent : Color.orange)
                 Text(output.lastPathComponent).font(.system(size: 11)).lineLimit(1)
                 Spacer()
-                if let warning = model.warning { Button("Warnings") { model.fail(warning) }.buttonStyle(.glass) }
-                Button("Show in Finder", systemImage: "folder") { model.reveal() }.buttonStyle(.glass)
+                if let warning = model.warning { Button("Warnings") { model.fail(warning) }.buttonStyle(NeutralGlassButtonStyle()) }
+                Button("Show in Finder", systemImage: "folder") { model.reveal() }.buttonStyle(NeutralGlassButtonStyle())
             }
-        }.padding(.horizontal, 16).padding(.vertical, 12)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 15)).padding(12)
+        }.padding(.horizontal, 16).frame(height: 40)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 15)).padding(.horizontal, 12)
     }
 }
 struct AboutView: View {
@@ -191,12 +221,12 @@ struct AboutView: View {
         VStack(spacing: 15) {
             Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 80, height: 80)
             Text("Muxie").font(.title.weight(.semibold))
-            Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.2.0").font(.callout).foregroundStyle(.secondary)
+            Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.0").font(.callout).foregroundStyle(.secondary)
             Text("© 2026 Yunyi Tang").font(.system(size: 11)).foregroundStyle(.secondary)
             Text("GPL-2.0-only").font(.system(size: 11)).foregroundStyle(.secondary)
             Link("MKVToolNix", destination: URL(string: "https://mkvtoolnix.download/")!).font(.system(size: 11))
             Text("© Moritz Bunkus and contributors").font(.system(size: 10)).foregroundStyle(.tertiary)
-            Button("Done") { dismiss() }.buttonStyle(.glass).keyboardShortcut(.defaultAction).padding(.top, 8)
+            Button("Done") { dismiss() }.buttonStyle(NeutralGlassButtonStyle()).keyboardShortcut(.defaultAction).padding(.top, 8)
         }.padding(30).frame(width: 320)
     }
 }

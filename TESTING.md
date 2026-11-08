@@ -80,3 +80,23 @@ Verified on 2026-11-08 in the environment above:
 - Version metadata is 1.2.0, build 3, English-only localization. Bundle signature verification passed.
 
 Packaging: Muxie-1.2.0-arm64.dmg was created as HFS/UDZO and hdiutil verified all image checksums. Shell syntax, plist lint and git diff whitespace checks passed. No actual drag-install from a mounted image was performed. Previous hardware/codec/notarization scope limits still apply.
+
+## Version 1.3.0 (build 4)
+
+Verified on 2026-11-08 in the environment above:
+
+- All 24 integration checks passed on the final source. New checks cover the absence of scroll/fractional-height clipping, exact per-row minimum-height growth, stable status-space reservation, and screen-bound complete-row pagination with no lost/duplicated tracks.
+- Supplied teal knot artwork copied unchanged to IconSource.png and aspect-fit without stretching. PNG and all 10 ICNS representations decode. The app's empty window visually showed the new teal icon.
+- Graphite neutral interface, native muted gray-green AccentColor asset, and neutral Liquid Glass action buttons visually checked. Asset compilation passed; no purple or bright blue app fills remain. System window-sharing indicators are not app palette elements.
+- Actual files with 2, 3, 4, 5 and 6 tracks were opened in the native app. At width 520 points, observed outer minimum heights were 424, 492, 560, 628 and 696 points respectively. Every track was fully present, with no track scroll area or scroll bar.
+- The native window refused an attempt to shrink the six-track window to the two-track height: it stayed at 520 × 696 rather than the requested 520 × 424.
+- Both the two-track and six-track workflows exported through the actual save panel. All rows remained visible after progress/results appeared; footer space had been reserved in advance.
+- Final six-track output contains 1 video, 1 audio and 4 subtitle tracks. Encoded audio/video packet hashes match the input:
+  - Video: cff1970d02f8802593e5f2b59f5f5809f91356a55da14a9044506e3944962d5b
+  - Audio: 0cb3c98ab21f94a6a82a22120922c319a1a89310ae32151f05b279e4d1169359
+- Checkbox inclusion is still manual and initial row focus is still empty. Default flags and existing track names are preserved as metadata.
+- Source-only integration used automatically found MKVToolNix; the personal app used its bundled 103.0 engine.
+- The screen-overflow pagination logic was integration-tested with 24 synthetic track records, not visually exercised with an actual 24-track media file.
+- Bundle signature and version 1.3.0 / build 4 metadata verified. Dark-mode colors are supplied in the accent asset but were not separately visually checked.
+
+Packaging: Muxie-1.3.0-arm64.dmg was created as HFS/UDZO and all hdiutil image checksums verified. Bundle signatures, shell syntax, Info.plist and accent-resource JSON validation passed. Actual drag-install from a mounted image was not performed. Prior hardware/codec/notarization limits still apply.

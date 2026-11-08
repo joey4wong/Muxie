@@ -1,6 +1,6 @@
 # Muxie
 
-Muxie is a native Mac app for selecting and editing media tracks, then exporting an MKV without re-encoding the video or audio. Version 1.2.0 (build 3) has an English-only interface with no sidebar or engine chooser. It targets macOS 26 or later; the personal build is for Apple Silicon (arm64).
+Muxie is a native Mac app for selecting and editing media tracks, then exporting an MKV without re-encoding the video or audio. Version 1.3.0 (build 4) has an English-only interface with no sidebar or engine chooser. It targets macOS 26 or later; the personal build is for Apple Silicon (arm64).
 
 Source repository: https://github.com/joey4wong/Muxie
 
@@ -14,7 +14,11 @@ Source repository: https://github.com/joey4wong/Muxie
 
 Unnamed tracks are labeled Video, Audio or Subtitle. Numbering is per type and appears only when there is more than one track of that type. Existing names are retained; generated labels are not written into track-name metadata.
 
-The empty-window content minimum is 380 × 280 points and the loaded-project content minimum is 520 × 360 points. macOS adds its title/toolbar height. Below 720 points wide, clicking a row opens a compact, scrollable inspector sheet instead of a fixed right-hand column.
+The empty-window content minimum is 380 × 280 points. Project minimum height grows with the imported track count: every track gets a complete 60-point row, with an 8-point gap between rows. Export and result/progress space are always reserved, so exporting does not shorten the track area. There is no vertical track scroller or percentage-height clipping. On the tested Mac, 2–6 tracks required outer window heights of 424, 492, 560, 628 and 696 points at 520 points wide. macOS title/toolbar heights may vary.
+
+When there is not enough width or vertical space for an inline inspector, clicking a row opens a compact inspector sheet. If an unusually large track count would exceed the physical display, complete rows are paginated instead of putting the window or Export off-screen; the 2–6 track cases do not paginate.
+
+The palette uses graphite neutrals with a muted gray-green accent for selections. Action buttons use neutral Liquid Glass surfaces, not saturated purple or blue fills.
 
 External audio remains a separate, selectable track; it is not mixed into the original audio. Subtitles remain selectable soft subtitles, not burned-in text. Burned-in subtitles cannot be removed. A player's own language preferences may override default-track flags.
 
@@ -36,7 +40,7 @@ chmod +x build.sh test.sh package-dmg.sh
 
 The default build creates `dist/Muxie.app` without a third-party engine. At runtime, Muxie automatically looks for an installed MKVToolNix app in `/Applications` or the user's Applications folder, or an installation supplied by Homebrew. There is no in-app engine chooser or custom engine-path field. Install MKVToolNix separately when using this source-only build.
 
-Existing output apps and DMGs are not silently removed. Move an old output before rebuilding, or choose another `OUT_DIR` for `build.sh`. The packaging script accepts the app path and output DMG path as its first and second arguments. Its default output is `dist/Muxie-1.2.0-arm64.dmg`.
+Existing output apps and DMGs are not silently removed. Move an old output before rebuilding, or choose another `OUT_DIR` for `build.sh`. The packaging script accepts the app path and output DMG path as its first and second arguments. Its default output is `dist/Muxie-1.3.0-arm64.dmg`.
 
 To copy the engine from an installed official app into a personal local build:
 
@@ -67,6 +71,10 @@ On 2026-11-08, all 16 integration checks passed, including two new checks for En
 ### Version 1.2.0 (build 3)
 
 On 2026-11-08, all 20 integration checks passed. New checks cover unchecked/unfocused import defaults and per-type labels. Native UI tests verified the supplied icon, smaller windows, compact inspector, manual inclusion and the centered Export action. An export through the compact workflow preserved the encoded video and audio packet hashes. The HFS/UDZO DMG is a personal development package, not a notarized public release. See `TESTING.md`.
+
+### Version 1.3.0 (build 4)
+
+On 2026-11-08, all 24 integration checks passed. Actual 2, 3, 4, 5 and 6 track files were opened at their computed minimum window sizes with every row complete and no vertical scroller. Two- and six-track exports left the layout unchanged; the final six-track export preserved the encoded audio/video packet hashes. The supplied teal artwork and neutral button palette were visually checked. See `TESTING.md` for the scope and packaging checks.
 
 ## License and third-party software
 

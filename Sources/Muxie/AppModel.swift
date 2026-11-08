@@ -18,6 +18,8 @@ import UniformTypeIdentifiers
     @Published var showError = false
     @Published var showAbout = false
     @Published var filter = "All"
+    @Published var trackPage = 0
+    @Published var workspaceScreenHeight: CGFloat = 900
     var job: RunningJob?
     var active: MediaTrack? { tracks.first { $0.id == selected } }
     var enabled: [MediaTrack] { tracks.filter(\.enabled) }
@@ -25,6 +27,17 @@ import UniformTypeIdentifiers
     var canExport: Bool { !busy && Engine.executable != nil && enabled.contains { $0.kind == "video" } }
     var totalBytes: Int64 { sources.reduce(0) { $0 + $1.byteSize } }
     var filtered: [MediaTrack] { tracks.filter { filter == "All" || $0.filterName == filter } }
+    var tracksPerPage: Int {
+        let capacity = WorkspaceLayout.pageCapacity(screenHeight: workspaceScreenHeight)
+        return tracks.count > capacity ? WorkspaceLayout.pageCapacity(screenHeight: workspaceScreenHeight, pagination: true) : capacity
+    }
+    var reservesPagination: Bool { tracks.count > tracksPerPage }
+    var reservedTrackRows: Int { max(1, min(tracks.count, tracksPerPage)) }
+    var pageCount: Int { max(1, Int(ceil(Double(filtered.count) / Double(tracksPerPage)))) }
+    var currentTrackPage: Int { min(max(0, trackPage), pageCount - 1) }
+    var pagedTracks: [MediaTrack] { Array(filtered.dropFirst(currentTrackPage * tracksPerPage).prefix(tracksPerPage)) }
+    var minimumTrackSectionHeight: CGFloat { WorkspaceLayout.trackSectionHeight(rows: reservedTrackRows, pagination: reservesPagination) }
+    var minimumContentHeight: CGFloat { sources.isEmpty ? 280 : WorkspaceLayout.minimumContentHeight(rows: reservedTrackRows, pagination: reservesPagination) }
     func displayName(for track: MediaTrack) -> String {
         if !track.name.isEmpty { return track.name }
         let peers = tracks.filter { $0.kind == track.kind }
@@ -93,7 +106,7 @@ import UniformTypeIdentifiers
         tracks.removeAll { $0.sourceID == source.id }; sources.removeAll { $0.id == source.id }
         if !tracks.contains(where: { $0.id == selected }) { selected = tracks.first?.id }; completed = nil
     }
-    func reset() { guard !busy else { return }; sources = []; tracks = []; selected = nil; completed = nil; warning = nil; filter = "All" }
+    func reset() { guard !busy else { return }; sources = []; tracks = []; selected = nil; completed = nil; warning = nil; filter = "All"; trackPage = 0 }
     func exportPanel() {
         guard canExport, let source = sources.first else { return }
         let panel = NSSavePanel(); panel.title = "Export MKV"; panel.prompt = "Export"; panel.canCreateDirectories = true

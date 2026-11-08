@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP="${1:-$ROOT/dist/Muxie.app}"
-OUT="${2:-$ROOT/dist/Muxie-1.2.0-arm64.dmg}"
+OUT="${2:-$ROOT/dist/Muxie-1.3.0-arm64.dmg}"
 [[ -d "$APP/Contents" ]] || { echo "Missing app: $APP" >&2; exit 1; }
 [[ ! -e "$OUT" ]] || { echo "Output exists: $OUT" >&2; exit 1; }
 codesign --verify --deep --strict "$APP"

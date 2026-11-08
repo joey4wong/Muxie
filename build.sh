@@ -17,6 +17,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Licenses"
 cp "$BUILD/Muxie" "$APP/Contents/MacOS/Muxie"
 cp "$ROOT/Support/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Support/AppIcon.icns" "$APP/Contents/Resources/"
+xcrun actool "$ROOT/Support/Assets.xcassets" --compile "$APP/Contents/Resources" --platform macosx --minimum-deployment-target 26.0 --accent-color AccentColor --output-format human-readable-text --output-partial-info-plist "$BUILD/AssetInfo.plist" > "$BUILD/assets.log" 2>&1 || { cat "$BUILD/assets.log"; exit 1; }
 cp "$ROOT/LICENSE" "$APP/Contents/Resources/Licenses/GPL-2.0.txt"
 cp "$ROOT/THIRD-PARTY-NOTICES.md" "$APP/Contents/Resources/Licenses/"
 if [[ "${1:-}" == --bundle-installed-engine ]]; then

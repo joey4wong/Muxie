@@ -20,6 +20,9 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let runtimeFiles = try fm.contentsOfDirectory(at: sourceFolder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
         let runtimeText = try runtimeFiles.map { try String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
         try check(!runtimeText.unicodeScalars.contains(where: { (0x3400...0x9fff).contains($0.value) }) && !runtimeText.contains("chooseEngine") && !runtimeText.contains("enginePath") && !runtimeText.contains("sidebar"), "English-only runtime source, no sidebar or engine chooser")
+        try check(!runtimeText.contains("ScrollView") && !runtimeText.contains("glassProminent") && !runtimeText.contains("height * 0.70"), "No track scrolling, fractional clipping or saturated prominent buttons")
+        let layoutSizes = (1...6).map { WorkspaceLayout.minimumContentHeight(rows: $0) }
+        try check(zip(layoutSizes, layoutSizes.dropFirst()).allSatisfy { $1 - $0 == WorkspaceLayout.rowHeight + WorkspaceLayout.rowSpacing }, "Minimum height increases by exactly one complete row per track")
         let video = fixture.appendingPathComponent("测试影片 sample.mp4")
         let original = try Data(contentsOf: video)
         let model = AppModel()
@@ -28,6 +31,20 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(model.enabled.isEmpty && model.selected == nil && !model.canExport, "Imported tracks are unchecked with no focused row")
         try check(model.tracks.map { model.displayName(for: $0) } == ["Video", "Audio"] && model.tracks.allSatisfy { $0.name.isEmpty }, "Unnamed tracks use generic labels without writing metadata")
         for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
+        let sizing = AppModel(); sizing.sources = model.sources; sizing.workspaceScreenHeight = 800
+        var sizeChecks = true
+        for count in 2...6 {
+            sizing.tracks = (0..<count).map { index in var track = model.tracks[index % 2]; track.id = UUID(); return track }
+            let before = sizing.minimumContentHeight
+            sizing.completed = run.appendingPathComponent("layout-only.mkv"); sizing.exporting = true
+            sizeChecks = sizeChecks && sizing.pagedTracks.count == count && !sizing.reservesPagination && before == sizing.minimumContentHeight && before == WorkspaceLayout.minimumContentHeight(rows: count)
+            sizing.completed = nil; sizing.exporting = false
+        }
+        try check(sizeChecks, "Two to six tracks fit without paging; export status never takes row space")
+        sizing.tracks = (0..<24).map { index in var track = model.tracks[index % 2]; track.id = UUID(); return track }
+        var pageIDs: [UUID] = []
+        for page in 0..<sizing.pageCount { sizing.trackPage = page; pageIDs += sizing.pagedTracks.map(\.id) }
+        try check(sizing.reservesPagination && Set(pageIDs).count == 24 && pageIDs.count == 24 && sizing.minimumContentHeight + WorkspaceLayout.chromeAllowance <= sizing.workspaceScreenHeight, "Screen-overflow uses complete non-scrolling pages without losing tracks")
         let remux = run.appendingPathComponent("MP4 转 MKV.mkv")
         await model.export(to: remux)
         try check(model.completed == remux && !model.showError, "MP4 to MKV export & track validation")
