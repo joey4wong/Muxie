@@ -23,6 +23,11 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(!runtimeText.contains("ScrollView") && !runtimeText.contains("glassProminent") && !runtimeText.contains("height * 0.70"), "No track scrolling, fractional clipping or saturated prominent buttons")
         let layoutSizes = (1...6).map { WorkspaceLayout.minimumContentHeight(rows: $0) }
         try check(zip(layoutSizes, layoutSizes.dropFirst()).allSatisfy { $1 - $0 == WorkspaceLayout.rowHeight + WorkspaceLayout.rowSpacing }, "Minimum height increases by exactly one complete row per track")
+        let projectFolder = sourceFolder.deletingLastPathComponent().deletingLastPathComponent()
+        let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: projectFolder.appendingPathComponent("Support/Info.plist")), format: nil) as? [String: Any] ?? [:]
+        let feedURL = (plist["SUFeedURL"] as? String).flatMap(URL.init(string:))
+        try check(feedURL?.scheme == "https" && (plist["SUPublicEDKey"] as? String)?.count == 44 && Int((plist["CFBundleVersion"] as? String) ?? "") != nil && plist["SUEnableAutomaticChecks"] as? Bool == false && plist["SUVerifyUpdateBeforeExtraction"] as? Bool == true, "Update settings: HTTPS feed, EdDSA public key, integer build, manual checks only, verify before extraction")
+        try check(!runtimeText.contains("Engine/mkvmerge"), "App does not look for a bundled engine")
         let video = fixture.appendingPathComponent("测试影片 sample.mp4")
         let original = try Data(contentsOf: video)
         let model = AppModel()

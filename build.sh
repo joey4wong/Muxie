@@ -1,44 +1,65 @@
 #!/bin/bash
+# Builds dist/Muxie.app: Muxie + the Sparkle updater framework. mkvmerge is NOT bundled.
+# Env: OUT_DIR (default ./dist), SIGN_IDENTITY (default "-" = ad-hoc).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT="${OUT_DIR:-$ROOT/dist}"
 BUILD="$ROOT/.build/local"
-mkdir -p "$OUT" "$BUILD"
 APP="$OUT/Muxie.app"
-VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Support/Info.plist")"
-BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/Support/Info.plist")"
-# Source-only builds use automatic runtime discovery of installed MKVToolNix.
-# --bundle-installed-engine is for personal local builds, not public distribution.
+PLIST="$ROOT/Support/Info.plist"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
+BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+
+# Sparkle is pinned and verified against a checksum published independently (Homebrew cask record).
+SPARKLE_VERSION=2.9.6
+SPARKLE_SHA256=52bf9e88cdd972fc0c81501377a880e90d47031bd8ca5462488f843e2609e192
+SPARKLE_DIR="$ROOT/.build/Sparkle-$SPARKLE_VERSION"
+
 if [[ -e "$APP" ]]; then echo "Output already exists: $APP. Move it first, or choose a new OUT_DIR." >&2; exit 1; fi
-ARCH="$(uname -m)"
-if [[ "$ARCH" != arm64 ]]; then echo 'This personal build targets Apple Silicon.' >&2; exit 1; fi
-xcrun swiftc -disable-sandbox -swift-version 5 -O -target arm64-apple-macosx26.0 -sdk "$(xcrun --sdk macosx --show-sdk-path)" "$ROOT"/Sources/Muxie/*.swift -o "$BUILD/Muxie"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Licenses"
+if [[ "$(uname -m)" != arm64 ]]; then echo 'This build targets Apple Silicon.' >&2; exit 1; fi
+
+if [[ ! -d "$SPARKLE_DIR/Sparkle.framework" ]]; then
+    mkdir -p "$SPARKLE_DIR"
+    curl -fsSL -o "$SPARKLE_DIR/Sparkle.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+    ACTUAL="$(shasum -a 256 "$SPARKLE_DIR/Sparkle.tar.xz" | awk '{print $1}')"
+    if [[ "$ACTUAL" != "$SPARKLE_SHA256" ]]; then
+        echo "Sparkle checksum mismatch (got $ACTUAL). Refusing to use it." >&2
+        rm -rf "$SPARKLE_DIR"; exit 1
+    fi
+    tar -xf "$SPARKLE_DIR/Sparkle.tar.xz" -C "$SPARKLE_DIR"
+    # Checksum-verified files only: drop a download quarantine flag that would stop the tools from running.
+    xattr -dr com.apple.quarantine "$SPARKLE_DIR" 2>/dev/null || true
+fi
+
+mkdir -p "$BUILD" "$APP/Contents/MacOS" "$APP/Contents/Resources/Licenses" "$APP/Contents/Frameworks"
+xcrun swiftc -disable-sandbox -swift-version 5 -O -target arm64-apple-macosx26.0 -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+    -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
+    "$ROOT"/Sources/Muxie/*.swift -o "$BUILD/Muxie"
 cp "$BUILD/Muxie" "$APP/Contents/MacOS/Muxie"
-cp "$ROOT/Support/Info.plist" "$APP/Contents/Info.plist"
+cp "$PLIST" "$APP/Contents/Info.plist"
 cp "$ROOT/Support/AppIcon.icns" "$APP/Contents/Resources/"
 xcrun actool "$ROOT/Support/Assets.xcassets" --compile "$APP/Contents/Resources" --platform macosx --minimum-deployment-target 26.0 --accent-color AccentColor --output-format human-readable-text --output-partial-info-plist "$BUILD/AssetInfo.plist" > "$BUILD/assets.log" 2>&1 || { cat "$BUILD/assets.log"; exit 1; }
 cp "$ROOT/LICENSE" "$APP/Contents/Resources/Licenses/GPL-2.0.txt"
 cp "$ROOT/THIRD-PARTY-NOTICES.md" "$APP/Contents/Resources/Licenses/"
-if [[ "${1:-}" == --bundle-installed-engine ]]; then
-    ENGINE_APP="${MKVTOOLNIX_APP:-/Applications/MKVToolNix.app}"
-    ENGINE="$APP/Contents/Resources/Engine"
-    mkdir -p "$ENGINE/libs"
-    cp "$ENGINE_APP/Contents/MacOS/mkvmerge" "$ENGINE/mkvmerge"
-    cp -L "$ENGINE_APP/Contents/MacOS/libs/libQt6Core.6.dylib" "$ENGINE/libs/"
-    cp "$ROOT/Support/LGPL-3.0.txt" "$APP/Contents/Resources/Licenses/"
-    codesign --verify --strict "$ENGINE/mkvmerge"
-    codesign --verify --strict "$ENGINE/libs/libQt6Core.6.dylib"
-    # These unchanged copies come from the already-installed, signed app.
-    xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
-    "$ENGINE/mkvmerge" --version > "$APP/Contents/Resources/Engine-Version.txt"
-    "$ENGINE/mkvmerge" --ui-language en_US -J /dev/null >/dev/null 2>&1 || [[ $? == 2 ]]
-    echo 'Bundled engine: personal local build. Do not publish this DMG before preparing corresponding source and complete dependency notices.'
-fi
-# The app binary is compiled locally. macOS can inherit the creator app's quarantine.
-# Clear the inherited marker only within this newly assembled development bundle.
-# Copied engine files were signature-verified above; the installed source app is never modified.
-xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
-codesign --force --sign - --timestamp=none "$APP"
+cp "$SPARKLE_DIR/LICENSE" "$APP/Contents/Resources/Licenses/Sparkle-LICENSE.txt"
+
+# Embed Sparkle (symlinks preserved). Muxie is not sandboxed, so the XPC services are not needed.
+# Muxie's interface is English-only, so keep only Sparkle's English strings.
+FW="$APP/Contents/Frameworks/Sparkle.framework"
+ditto "$SPARKLE_DIR/Sparkle.framework" "$FW"
+rm -rf "$FW/Versions/B/XPCServices" "$FW/XPCServices"
+find "$FW/Versions/B/Resources" -maxdepth 1 -name '*.lproj' ! -name 'en.lproj' ! -name 'Base.lproj' -exec rm -rf {} +
+
+# Sign inside-out. Developer ID builds also get the hardened runtime and a secure timestamp.
+if [[ "$SIGN_IDENTITY" == "-" ]]; then SIGN=(codesign --force --sign - --timestamp=none)
+else SIGN=(codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime); fi
+"${SIGN[@]}" "$FW/Versions/B/Autoupdate"
+"${SIGN[@]}" "$FW/Versions/B/Updater.app"
+"${SIGN[@]}" "$FW"
+"${SIGN[@]}" "$APP"
+# Clear inherited extended attributes, including those on the framework's symlinks (xattr -r skips links).
+xattr -cr "$APP" 2>/dev/null || true
+find "$APP" -type l -exec xattr -s -c {} \; 2>/dev/null || true
 codesign --verify --deep --strict "$APP"
-echo "Built $APP (version $VERSION, build $BUILD_NUMBER)"
+echo "Built $APP (version $VERSION, build $BUILD_NUMBER, signed: $SIGN_IDENTITY)"

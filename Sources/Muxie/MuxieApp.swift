@@ -6,6 +6,7 @@ import AppKit
 
 @main struct MuxieApp: App {
     @StateObject private var model = AppModel()
+    @StateObject private var updater = UpdaterModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
         Window("Muxie", id: "main") {
@@ -23,7 +24,11 @@ import AppKit
         .windowToolbarStyle(.unified)
         .windowResizability(.contentMinSize)
         .commands {
-            CommandGroup(replacing: .appInfo) { Button("About Muxie") { model.showAbout = true } }
+            CommandGroup(replacing: .appInfo) {
+                Button("About Muxie") { model.showAbout = true }
+                Button("Check for Updates…") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheck || model.busy)
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Project") { model.reset() }.keyboardShortcut("n").disabled(model.busy || model.sources.isEmpty)
                 Button("Open Video…") { model.openFiles() }.keyboardShortcut("o").disabled(model.busy || !model.sources.isEmpty)

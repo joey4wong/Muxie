@@ -3,24 +3,20 @@
 Muxie is an independent SwiftUI frontend, not an official MKVToolNix product.
 Muxie's application source is licensed under GPL-2.0-only; see LICENSE.
 The current icon is user-supplied artwork (Support/IconSource.png), converted without redrawing. No third-party authorship or ownership is asserted; the converter script's license does not claim ownership of its input image.
-No MKVToolNix source code is copied into the frontend.
 
-## MKVToolNix
+## Sparkle (bundled)
 
+Muxie.app embeds the Sparkle update framework, version 2.9.6.
+Website: https://sparkle-project.org/ , source: https://github.com/sparkle-project/Sparkle
+License: MIT (with notices for the components Sparkle includes). The complete license text is shipped in the app at Contents/Resources/Licenses/Sparkle-LICENSE.txt.
+The framework is embedded from the official release archive, verified against a published checksum before use. Changes: Sparkle's XPC services (unused by a non-sandboxed app) and its non-English localizations are removed, and the helper tools are re-signed.
+
+## MKVToolNix (not bundled)
+
+Muxie runs the separately installed `mkvmerge` executable. No MKVToolNix code or binary is included in Muxie, its DMG or its update archives.
 Copyright Moritz Bunkus and other contributors. GPL-2.0-only.
-Website: https://mkvtoolnix.download/
-Source: https://codeberg.org/mbunkus/mkvtoolnix
-The personal local build uses mkvmerge 103.0, copied unchanged from the installed official macOS app.
-The source archive does NOT contain the mkvmerge binary or third-party libraries.
-
-## Qt Core
-
-The personal bundle also copies libQt6Core.6.dylib 6.11.1 from the installed MKVToolNix app.
-Qt is copyright The Qt Company Ltd. and other contributors; available under applicable Qt open-source/commercial terms, including LGPL-3.0. See Support/LGPL-3.0.txt and https://www.qt.io/licensing/open-source-lgpl-obligations .
-The application does not link Qt; it launches the independent mkvmerge executable.
+Website: https://mkvtoolnix.download/ , source: https://codeberg.org/mbunkus/mkvtoolnix
 
 ## Distribution boundary
 
-The bundled DMG is a personal local build, not a public release or a claim of completed redistribution compliance.
-Before publishing any binaries, obtain and provide the complete corresponding source, build/install scripts, modifications and required notices for the exact bundled upstream binaries and all covered components. An upstream homepage link alone is not a substitute.
-The upstream README documents additional embedded components and notices: https://codeberg.org/mbunkus/mkvtoolnix/src/tag/release-103.0/README.md . Audit those and the actual build configuration before redistribution.
+Because Muxie does not redistribute MKVToolNix, the GPL obligations for that program stay with its own distribution. If a future build ever bundles `mkvmerge` or any of its libraries, first provide the complete corresponding source, build and install scripts, license texts and notices for the exact bundled versions. A link to the upstream homepage is not a substitute.

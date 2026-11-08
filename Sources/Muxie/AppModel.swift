@@ -56,7 +56,7 @@ import UniformTypeIdentifiers
     }
     func importFiles(_ urls: [URL]) async {
         guard !busy, !urls.isEmpty else { return }
-        guard let engine = Engine.executable else { fail("MKVToolNix is unavailable. Reinstall Muxie or install MKVToolNix."); return }
+        guard let engine = Engine.executable else { fail("MKVToolNix is not installed. Install it from mkvtoolnix.download, then try again."); return }
         importing = true; completed = nil; warning = nil
         var failures: [String] = []
         for url in urls {

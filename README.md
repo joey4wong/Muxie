@@ -1,92 +1,40 @@
 # Muxie
 
-Muxie is a native Mac app for selecting and editing media tracks, then exporting an MKV without re-encoding the video or audio. Version 1.3.0 (build 4) has an English-only interface with no sidebar or engine chooser. It targets macOS 26 or later; the personal build is for Apple Silicon (arm64).
+A native Mac app for choosing which video, audio and subtitle tracks go into an MKV, naming them, setting language / default / forced flags, and exporting without re-encoding. SwiftUI with Liquid Glass; macOS 26 or later, Apple Silicon.
 
-Source repository: https://github.com/joey4wong/Muxie
+Source: https://github.com/joey4wong/Muxie
+
+## Requirements
+
+[MKVToolNix](https://mkvtoolnix.download/) must be installed separately. Muxie runs its `mkvmerge` and looks in `/Applications`, `~/Applications` and Homebrew. Nothing from MKVToolNix is bundled.
 
 ## Use
 
-1. Drag Muxie from the DMG into Applications, then launch it.
-2. Open a video, or drop it into the window.
-3. Add tracks from an audio file, subtitle file, or another video. Imported tracks start unchecked; no row is automatically focused.
-4. Check the tracks to include, then click a row to edit its name, language, default or forced flags.
-5. Click **Export**, centered below the track area, to save an MKV to a new filename. The original files are not modified.
+1. Open a video, or drop it into the window.
+2. Add tracks from an audio file, a subtitle file or another video. Imported tracks start unchecked, and no row is focused.
+3. Check the tracks to include. Click a row to edit its name, language, default and forced flags.
+4. Click **Export** and save to a new filename. Originals are never modified, and existing files are never overwritten.
 
-Unnamed tracks are labeled Video, Audio or Subtitle. Numbering is per type and appears only when there is more than one track of that type. Existing names are retained; generated labels are not written into track-name metadata.
+Export remuxes only: no transcoding, mixing or DRM handling. External audio becomes a separate selectable track. Subtitles stay soft subtitles. Chapters, tags and attachments from the first file are kept; subtitle fonts from added files are kept too.
 
-The empty-window content minimum is 380 × 280 points. Project minimum height grows with the imported track count: every track gets a complete 60-point row, with an 8-point gap between rows. Export and result/progress space are always reserved, so exporting does not shorten the track area. There is no vertical track scroller or percentage-height clipping. On the tested Mac, 2–6 tracks required outer window heights of 424, 492, 560, 628 and 696 points at 520 points wide. macOS title/toolbar heights may vary.
+Unnamed tracks are labeled Video / Audio / Subtitle (numbered per type when there are several); these labels are not written into the file. The window's minimum height grows with the track count, so every row stays visible without a scroller. Only if the rows cannot fit on the display are they paginated.
 
-When there is not enough width or vertical space for an inline inspector, clicking a row opens a compact inspector sheet. If an unusually large track count would exceed the physical display, complete rows are paginated instead of putting the window or Export off-screen; the 2–6 track cases do not paginate.
+## Updates
 
-The palette uses graphite neutrals with a muted gray-green accent for selections. Action buttons use neutral Liquid Glass surfaces, not saturated purple or blue fills.
+**Muxie > Check for Updates…** looks for a newer version on GitHub Releases. Checks are manual only: there are no background checks and no prompts. The item is disabled while an import or export is running. Updates are signed with an EdDSA key and verified before they are unpacked; Muxie then replaces itself and relaunches. Update archives contain Muxie only. See `RELEASING.md` to publish one.
 
-External audio remains a separate, selectable track; it is not mixed into the original audio. Subtitles remain selectable soft subtitles, not burned-in text. Burned-in subtitles cannot be removed. A player's own language preferences may override default-track flags.
+## Build and test
 
-Muxie does not transcode, mix audio, repair synchronization, or handle DRM. Input compatibility depends on MKVToolNix. Export includes progress reporting, cancellation, partial-output cleanup, track validation, and protection against overwriting input files or existing output files.
-
-Chapters, global tags, and attachments from the primary source are retained. Importing subtitles from an additional source also retains its attachments, such as ASS fonts. Chapters and global tags from additional sources are not merged.
-
-Processing is local, with no account, uploads, or telemetry. Website links open only when clicked.
-
-## Build
-
-Install Xcode with the macOS 26 SDK or later. Open `Package.swift` in Xcode to browse the source. To assemble an installable app and DMG:
+Xcode with the macOS 26 SDK is required.
 
 ```sh
-chmod +x build.sh test.sh package-dmg.sh
-./build.sh
-./package-dmg.sh
+./build.sh          # dist/Muxie.app, with the Sparkle framework embedded
+./package-dmg.sh    # dist/Muxie-<version>-arm64.dmg
+./test.sh           # integration tests (ffmpeg is needed only to generate fixtures)
 ```
 
-The default build creates `dist/Muxie.app` without a third-party engine. At runtime, Muxie automatically looks for an installed MKVToolNix app in `/Applications` or the user's Applications folder, or an installation supplied by Homebrew. There is no in-app engine chooser or custom engine-path field. Install MKVToolNix separately when using this source-only build.
-
-Existing output apps and DMGs are not silently removed. Move an old output before rebuilding, or choose another `OUT_DIR` for `build.sh`. The packaging script accepts the app path and output DMG path as its first and second arguments. Its default output is `dist/Muxie-1.3.0-arm64.dmg`.
-
-To copy the engine from an installed official app into a personal local build:
-
-```sh
-./build.sh --bundle-installed-engine
-./package-dmg.sh
-```
-
-The personal bundled-engine build uses MKVToolNix 103.0 with Qt Core 6.11.1. By default, the script copies it from `/Applications/MKVToolNix.app`; `MKVTOOLNIX_APP` can select a different installed app at build time. This is not an in-app path setting. The source package does not contain those binaries.
-
-These are ad-hoc-signed local development builds, without Developer ID notarization or automatic updates. The build script removes inherited quarantine attributes only from the newly assembled development bundle. It does not change system protection settings or the installed MKVToolNix app. Public distribution requires a separate signing, notarization, and license-compliance review.
-
-## Testing
-
-```sh
-# ffmpeg is needed only to generate test fixtures, not to run Muxie.
-./test.sh
-```
-
-### Historical 1.0.0 results
-
-On 2026-11-08, version 1.0.0 completed 14 checks on the development Mac (Apple Silicon, macOS 27.3, SDK 27.2). Those checks covered multiple audio and subtitle tracks, Unicode names, language and default flags, track removal, MP4 remuxing, overwrite protection, cancellation, and progress parsing. An export through the native interface was also verified. Encoded video and audio packet SHA-256 hashes matched between the input and output samples. See `TESTING.md` for the recorded results and scope limits.
-
-### Version 1.1.0 (build 2)
-
-On 2026-11-08, all 16 integration checks passed, including two new checks for English-only application source, removed sidebar/engine chooser, and English track filters. The revised native interface was used to add an external audio track and SRT, edit names and languages, set a default subtitle and export a four-track MKV. The empty window and About sheet were also checked. Bundle signatures and DMG checksums passed verification. See `TESTING.md` for details. This does not include an actual drag-install, an independent macOS 26 device, or Intel hardware.
-
-### Version 1.2.0 (build 3)
-
-On 2026-11-08, all 20 integration checks passed. New checks cover unchecked/unfocused import defaults and per-type labels. Native UI tests verified the supplied icon, smaller windows, compact inspector, manual inclusion and the centered Export action. An export through the compact workflow preserved the encoded video and audio packet hashes. The HFS/UDZO DMG is a personal development package, not a notarized public release. See `TESTING.md`.
-
-### Version 1.3.0 (build 4)
-
-On 2026-11-08, all 24 integration checks passed. Actual 2, 3, 4, 5 and 6 track files were opened at their computed minimum window sizes with every row complete and no vertical scroller. Two- and six-track exports left the layout unchanged; the final six-track export preserved the encoded audio/video packet hashes. The supplied teal artwork and neutral button palette were visually checked. See `TESTING.md` for the scope and packaging checks.
+`build.sh` downloads Sparkle at a pinned version and refuses it unless its SHA-256 matches. Builds are ad-hoc signed unless `SIGN_IDENTITY` is set, and are not notarized. `TESTING.md` records what has been verified and what has not.
 
 ## License and third-party software
 
-Muxie's application code is licensed under **GPL-2.0-only**. See `LICENSE`. The current icon uses user-supplied artwork preserved in `Support/IconSource.png`; no third-party authorship or ownership is asserted. `Support/GenerateIcon.swift` reproducibly converts that image into the macOS icon assets without redrawing it.
-
-Muxie is an independent native frontend, not an official MKVToolNix product, and does not copy its GUI code. Media processing is performed by the separate `mkvmerge` process. MKVToolNix is developed by Moritz Bunkus and its contributors.
-
-- Official website: https://mkvtoolnix.download/
-- Upstream source: https://codeberg.org/mbunkus/mkvtoolnix
-- MKVToolNix license: GPL-2.0-only.
-- The source archive contains no mkvmerge or Qt binaries.
-
-Acknowledgment in a README alone is not sufficient to distribute a DMG containing the engine. Before public distribution, prepare the complete corresponding source for the actual bundled versions, modifications and build/install scripts, license texts, and third-party notices. Review every bundled dependency's license. An upstream homepage link is not a substitute for providing corresponding source. See `THIRD-PARTY-NOTICES.md`.
-
-The public repository provides Muxie source only, not the personal DMG containing third-party binaries.
+Muxie's own source is licensed under **GPL-2.0-only** (see `LICENSE`). It embeds Sparkle (MIT) and runs MKVToolNix, which is GPL-2.0-only and not redistributed. Muxie is not an official MKVToolNix product; MKVToolNix is by Moritz Bunkus and contributors. Details are in `THIRD-PARTY-NOTICES.md`.

@@ -100,3 +100,33 @@ Verified on 2026-11-08 in the environment above:
 - Bundle signature and version 1.3.0 / build 4 metadata verified. Dark-mode colors are supplied in the accent asset but were not separately visually checked.
 
 Packaging: Muxie-1.3.0-arm64.dmg was created as HFS/UDZO and all hdiutil image checksums verified. Bundle signatures, shell syntax, Info.plist and accent-resource JSON validation passed. Actual drag-install from a mounted image was not performed. Prior hardware/codec/notarization limits still apply.
+
+## Version 1.4.0 (build 5): in-app updates
+
+Verified on 2026-11-08 in the environment above (Apple Silicon, macOS 27.3).
+
+Automated: 26 integration checks pass. New: the Info.plist update settings (HTTPS feed, 44-character EdDSA public key, integer build number, manual checks only, verify-before-extraction) and the absence of any bundled-engine lookup.
+
+End-to-end update, run for real against Sparkle 2.9.6:
+
+- Two test builds of the same source: 1.4.0 (build 5) and 1.4.1 (build 6). They used a separate bundle ID, so the user's installed Muxie was untouched, and a feed on 127.0.0.1 that served an appcast plus a zip signed with the real EdDSA key.
+- In 1.4.0, Muxie > Check for Updates… opened Sparkle's dialog: "A new version of Muxie is available! Muxie 1.4.1 is now available—you have 1.4.0." Text was English; buttons were Skip This Version and Install Update.
+- Install Update downloaded and verified the archive and reached "Ready to Install". Install and Relaunch then replaced the app: Info.plist on disk went from 1.4.0/5 to 1.4.1/6, the code signature verified, and About showed 1.4.1.
+- The feed server log shows the requests in order: appcast, zip, then an appcast request again for a second check after the update.
+
+Release build: `release.sh` ran in Terminal.app and produced Muxie-1.4.0.zip with an appcast. The appcast's declared length equals the zip size. The zip holds no MKVToolNix files and no quarantine attributes. Without the engine, the app is 4.7 MB, down from about 15 MB. Sparkle's XPC services and non-English localizations are removed; the English dialog above confirms the framework still works that way.
+
+Issues found and fixed during testing:
+
+- Sparkle's `generate_keys` failed from a sandboxed shell (Keychain error 100001) and succeeded from Terminal.app. The signing step is therefore documented as a Terminal step.
+- `xattr -cr` skips symlinks. Sparkle.framework's symlinks kept an inherited quarantine attribute and ended up inside the first test archive. `build.sh` now also clears symlink attributes, and the final archive was checked by reading its raw contents.
+- Sparkle 2.10.1 was the newest release, but its archive checksum could not be confirmed from an independent source, so 2.9.6 is pinned. Its checksum matches the Homebrew cask record.
+
+Not verified:
+
+- The result shown when already up to date: the second check reached the feed, but the dialog was not observed.
+- An update from the real GitHub feed (checked separately after publishing, see below).
+- Updating a copy installed in /Applications, or by a non-admin user.
+- Whether Sparkle itself relaunched the app, or my test harness reopened it.
+- Gatekeeper behavior for a first install on a machine that never ran this build. Builds are ad-hoc signed and not notarized; Developer ID signing and notarization are untested.
+- Skipping a version, interrupted downloads and a tampered archive were not exercised.

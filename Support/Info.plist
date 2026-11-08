@@ -41,9 +41,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.3.0</string>
+	<string>1.4.0</string>
 	<key>CFBundleVersion</key>
-	<string>4</string>
+	<string>5</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>NSAccentColorName</key>
@@ -54,5 +54,15 @@
 	<string>Copyright © 2026 Yunyi Tang. GPL-2.0-only.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/joey4wong/Muxie/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>2pS1vbTRcFHZLbZAf9r7pxlsutq/SkQ4/ydEHLlzroE=</string>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>
