@@ -1,67 +1,76 @@
 # Muxie
 
-一个简洁的原生 Mac 轨道整理工具。SwiftUI + 系统 Liquid Glass，最低目标 macOS 26，当前自用构建为 Apple Silicon（arm64）。
+Muxie is a native Mac app for selecting and editing media tracks, then exporting an MKV without re-encoding the video or audio. Version 1.1.0 (build 2) has an English-only interface with no sidebar or engine chooser. It targets macOS 26 or later; the personal build is for Apple Silicon (arm64).
 
-## 已实现
+Source repository: https://github.com/joey4wong/Muxie
 
-- 导入 MP4 / MKV，识别视频、音频、字幕轨道。
-- 添加外部音轨，在播放器中作为独立音轨切换，不混音。
-- 添加 SRT 字幕；取消勾选即从新的 MKV 中移除不需要的音轨或字幕。
-- 修改轨道显示名称、语言、默认轨道和字幕强制标记。
-- MP4 → MKV 无损重新封装，不进行视频/音频重新编码。
-- 导出进度、取消、失败清理、成品轨道校验、拒绝覆盖输入及已有输出。
-- 本机处理，无账户、无上传、无遥测。只在用户点击官网链接时打开网站。
+## Use
 
-## 使用
+1. Drag Muxie from the DMG into Applications, then launch it.
+2. Open a video, or drop it into the window.
+3. Add tracks from an audio file, subtitle file, or another video.
+4. Select the tracks to keep. Edit their names and languages, and set default or forced flags as needed.
+5. Export an MKV to a new filename. The original files are not modified.
 
-1. 将 DMG 中的 Muxie 拖入 Applications，然后启动。
-2. 选择主影片，或把影片拖进窗口。
-3. 点“添加音轨 / 字幕”，选择独立音频、SRT 或另一部包含所需轨道的影片。
-4. 勾选需要保留的轨道，点选轨道，在右边编辑显示名称和语言。
-5. 点“导出 MKV”，使用新的文件名。不会修改原影片。
+External audio remains a separate, selectable track; it is not mixed into the original audio. Subtitles remain selectable soft subtitles, not burned-in text. Burned-in subtitles cannot be removed. A player's own language preferences may override default-track flags.
 
-字幕是可切换的软字幕，不是烧进画面。已烧入画面的字幕不能移除。播放器可能优先采用自身的语言偏好，因此默认标志不保证自动选中。不会转码、混音、修复音画不同步或处理 DRM。输入兼容性由 MKVToolNix 决定。
+Muxie does not transcode, mix audio, repair synchronization, or handle DRM. Input compatibility depends on MKVToolNix. Export includes progress reporting, cancellation, partial-output cleanup, track validation, and protection against overwriting input files or existing output files.
 
-附件/章节策略：保留主来源章节、全局标签及附件；从附加来源导入字幕时也保留该来源附件（例如 ASS 字体）。不合并附加来源的章节和全局标签。
+Chapters, global tags, and attachments from the primary source are retained. Importing subtitles from an additional source also retains its attachments, such as ASS fonts. Chapters and global tags from additional sources are not merged.
 
-## 构建
+Processing is local, with no account, uploads, or telemetry. Website links open only when clicked.
 
-安装 Xcode（包含 macOS 26 或更新 SDK）。双击 `Package.swift` 可在 Xcode 浏览源码。可安装的 app 用以下脚本构建：
+## Build
+
+Install Xcode with the macOS 26 SDK or later. Open `Package.swift` in Xcode to browse the source. To assemble an installable app and DMG:
 
 ```sh
-chmod +x build.sh test.sh
+chmod +x build.sh test.sh package-dmg.sh
 ./build.sh
 ./package-dmg.sh
 ```
 
-默认生成 `dist/Muxie.app`，不含第三方引擎。它会查找 `/Applications/MKVToolNix.app`、用户 Applications、Homebrew，或者“关于 Muxie”中选取的 mkvmerge。自定义路径优先于内置引擎。已有输出目录不会被静默删除，重复构建请先移动旧 app，或设置新的 `OUT_DIR`。
+The default build creates `dist/Muxie.app` without a third-party engine. At runtime, Muxie automatically looks for an installed MKVToolNix app in `/Applications` or the user's Applications folder, or an installation supplied by Homebrew. There is no in-app engine chooser or custom engine-path field. Install MKVToolNix separately when using this source-only build.
 
-本机自用、复制已安装官方 app 的引擎（当前验证的是 MKVToolNix 103.0 / Qt Core 6.11.1）：
+Existing output apps and DMGs are not silently removed. Move an old output before rebuilding, or choose another `OUT_DIR` for `build.sh`. The packaging script accepts the app path and output DMG path as its first and second arguments. Its default output is `dist/Muxie-1.1.0-arm64.dmg`.
+
+To copy the engine from an installed official app into a personal local build:
 
 ```sh
 ./build.sh --bundle-installed-engine
+./package-dmg.sh
 ```
 
-这是本地开发构建，采用 ad-hoc 签名，没有 Developer ID 公证，也没有自动更新。本脚本只清理新装配开发包继承的 quarantine 标记，不修改系统保护设置或原来的 MKVToolNix 安装。对外发放之前，需要正式处理签名、公证和许可证合规，而不是直接发布这个自用 DMG。
+The personal bundled-engine build uses MKVToolNix 103.0 with Qt Core 6.11.1. By default, the script copies it from `/Applications/MKVToolNix.app`; `MKVTOOLNIX_APP` can select a different installed app at build time. This is not an in-app path setting. The source package does not contain those binaries.
 
-## 测试
+These are ad-hoc-signed local development builds, without Developer ID notarization or automatic updates. The build script removes inherited quarantine attributes only from the newly assembled development bundle. It does not change system protection settings or the installed MKVToolNix app. Public distribution requires a separate signing, notarization, and license-compliance review.
+
+## Testing
 
 ```sh
-# 仅生成测试素材时需要 ffmpeg，应用运行不需要它。
+# ffmpeg is needed only to generate test fixtures, not to run Muxie.
 ./test.sh
 ```
 
-2026-11-08 在当前 Mac（macOS 27.3、Apple Silicon、SDK 27.2）上完成 14 项检查，覆盖双音轨、双字幕、中英文名称、语言、默认标志、删除轨道、MP4 重封装、覆盖保护、取消及进度解析；并通过真实界面导出。输出样本的视频和音频编码数据 SHA-256 均与输入一致。详见 `TESTING.md`。未在独立 macOS 26 设备或 Intel Mac 上实机验证。
+### Historical 1.0.0 results
 
-## 开源与第三方
+On 2026-11-08, version 1.0.0 completed 14 checks on the development Mac (Apple Silicon, macOS 27.3, SDK 27.2). Those checks covered multiple audio and subtitle tracks, Unicode names, language and default flags, track removal, MP4 remuxing, overwrite protection, cancellation, and progress parsing. An export through the native interface was also verified. Encoded video and audio packet SHA-256 hashes matched between the input and output samples. See `TESTING.md` for the recorded results and scope limits.
 
-Muxie 自有源码和图标采用 **GPL-2.0-only**，见 `LICENSE`。
+### Version 1.1.0 (build 2)
 
-本应用是独立原生前端，不是 MKVToolNix 官方产品，也没有复制其 GUI 代码。媒体处理由独立进程 `mkvmerge` 完成。感谢 Moritz Bunkus 及 MKVToolNix 贡献者。
+On 2026-11-08, all 16 integration checks passed, including two new checks for English-only application source, removed sidebar/engine chooser, and English track filters. The revised native interface was used to add an external audio track and SRT, edit names and languages, set a default subtitle and export a four-track MKV. The empty window and About sheet were also checked. Bundle signatures and DMG checksums passed verification. See `TESTING.md` for details. This does not include an actual drag-install, an independent macOS 26 device, or Intel hardware.
 
-- 官方网站：https://mkvtoolnix.download/
-- 上游源码：https://codeberg.org/mbunkus/mkvtoolnix
-- MKVToolNix：GPL-2.0-only。
-- 源码压缩包不含 mkvmerge 或 Qt 二进制。
+## License and third-party software
 
-若公开发布含有引擎的 DMG，仅 README 致谢不够。必须针对实际随包版本准备完整对应源码、修改及构建安装脚本、许可文本和第三方通知，并检查所有依赖的许可证。上游主页链接不是对应源码交付的替代品。见 `THIRD-PARTY-NOTICES.md`。本仓库仅公开 Muxie 源码，不提供内置第三方引擎的自用 DMG。
+Muxie's own source code and icon are licensed under **GPL-2.0-only**. See `LICENSE`.
+
+Muxie is an independent native frontend, not an official MKVToolNix product, and does not copy its GUI code. Media processing is performed by the separate `mkvmerge` process. MKVToolNix is developed by Moritz Bunkus and its contributors.
+
+- Official website: https://mkvtoolnix.download/
+- Upstream source: https://codeberg.org/mbunkus/mkvtoolnix
+- MKVToolNix license: GPL-2.0-only.
+- The source archive contains no mkvmerge or Qt binaries.
+
+Acknowledgment in a README alone is not sufficient to distribute a DMG containing the engine. Before public distribution, prepare the complete corresponding source for the actual bundled versions, modifications and build/install scripts, license texts, and third-party notices. Review every bundled dependency's license. An upstream homepage link is not a substitute for providing corresponding source. See `THIRD-PARTY-NOTICES.md`.
+
+The public repository provides Muxie source only, not the personal DMG containing third-party binaries.

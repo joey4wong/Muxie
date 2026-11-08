@@ -16,6 +16,10 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         func check(_ condition: @autoclosure () throws -> Bool, _ name: String) throws {
             if !(try condition()) { throw MuxError.message("FAIL: " + name) }; results.append("PASS: " + name); print(results.last!)
         }
+        let sourceFolder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/Muxie")
+        let runtimeFiles = try fm.contentsOfDirectory(at: sourceFolder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
+        let runtimeText = try runtimeFiles.map { try String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
+        try check(!runtimeText.unicodeScalars.contains(where: { (0x3400...0x9fff).contains($0.value) }) && !runtimeText.contains("chooseEngine") && !runtimeText.contains("enginePath") && !runtimeText.contains("sidebar"), "English-only runtime source, no sidebar or engine chooser")
         let video = fixture.appendingPathComponent("测试影片 sample.mp4")
         let original = try Data(contentsOf: video)
         let model = AppModel()
@@ -26,6 +30,11 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(model.completed == remux && !model.showError, "MP4 to MKV export & track validation")
         await model.importFiles([fixture.appendingPathComponent("国语音轨.m4a"), fixture.appendingPathComponent("简体中文.srt"), fixture.appendingPathComponent("English.srt")])
         try check(model.sources.count == 4 && model.tracks.count == 5, "Add separate audio & SRT subtitles")
+        model.filter = "Audio"
+        let audioFiltered = model.filtered.count == 2 && model.filtered.allSatisfy { $0.kind == "audio" }
+        model.filter = "Subtitles"
+        try check(audioFiltered && model.filtered.count == 2 && model.filtered.allSatisfy { $0.kind == "subtitles" }, "English audio and subtitle filters")
+        model.filter = "All"
         for track in model.tracks {
             if track.kind == "audio" { model.binding(track.id, \.name).wrappedValue = track.sourceID == model.sources[0].id ? "English · Original" : "国语 ‘配音’ & Stereo"; model.binding(track.id, \.language).wrappedValue = track.sourceID == model.sources[0].id ? "en" : "zh" }
             if track.kind == "subtitles" { model.binding(track.id, \.name).wrappedValue = track.sourceID == model.sources[2].id ? "简体中文 / SRT" : "English"; model.binding(track.id, \.language).wrappedValue = track.sourceID == model.sources[2].id ? "zh-Hans" : "en" }

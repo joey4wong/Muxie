@@ -24,7 +24,8 @@ struct MediaTrack: Identifiable, Equatable, Sendable {
     var name: String; var language: String; var isDefault: Bool; var isForced: Bool; var enabled: Bool
     var detail: String
     var symbol: String { kind == "video" ? "film" : kind == "audio" ? "waveform" : "captions.bubble" }
-    var kindName: String { kind == "video" ? "视频" : kind == "audio" ? "音轨" : "字幕" }
+    var kindName: String { kind == "video" ? "Video" : kind == "audio" ? "Audio" : "Subtitle" }
+    var filterName: String { kind == "subtitles" ? "Subtitles" : kindName }
 }
 struct MediaSource: Identifiable, Equatable, Sendable {
     var id: UUID; var url: URL; var container: String; var byteSize: Int64
@@ -93,7 +94,6 @@ final class RunningJob: @unchecked Sendable {
 enum Engine {
     static var candidates: [URL] {
         var paths: [String] = []
-        if let custom = UserDefaults.standard.string(forKey: "enginePath"), !custom.isEmpty { paths.append(custom) }
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("Engine/mkvmerge").path { paths.append(bundled) }
         paths += ["/Applications/MKVToolNix.app/Contents/MacOS/mkvmerge", NSHomeDirectory() + "/Applications/MKVToolNix.app/Contents/MacOS/mkvmerge", "/opt/homebrew/bin/mkvmerge", "/usr/local/bin/mkvmerge"]
         return paths.map { URL(fileURLWithPath: $0) }
@@ -101,16 +101,16 @@ enum Engine {
     static var executable: URL? { candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) } }
     static func identify(_ url: URL, engine: URL, job: RunningJob = RunningJob()) throws -> Probe {
         let result = try job.run(engine: engine, arguments: ["--ui-language", "en_US", "-J", url.path])
-        guard result.0 <= 1 else { throw MuxError.message("无法读取 \(url.lastPathComponent)：\n" + String(decoding: result.1, as: UTF8.self)) }
+        guard result.0 <= 1 else { throw MuxError.message("Cannot read \(url.lastPathComponent):\n" + String(decoding: result.1, as: UTF8.self)) }
         let probe = try JSONDecoder().decode(Probe.self, from: result.1)
-        guard probe.container.recognized && probe.container.supported else { throw MuxError.message("不支持这个文件：\(url.lastPathComponent)") }
+        guard probe.container.recognized && probe.container.supported else { throw MuxError.message("Unsupported file: \(url.lastPathComponent)") }
         return probe
     }
     static func export(plan: ExportPlan, output: URL, engine: URL, job: RunningJob, progress: @escaping @Sendable (Double) -> Void) throws -> String? {
         let fm = FileManager.default
         let target = output.standardizedFileURL.resolvingSymlinksInPath()
-        guard !plan.sources.contains(where: { $0.url.standardizedFileURL.resolvingSymlinksInPath() == target }) else { throw MuxError.message("输出文件不能是来源文件。请选择新文件名，原文件会保持不变。") }
-        guard !fm.fileExists(atPath: output.path) else { throw MuxError.message("目标文件已存在。为保护已有文件，请换一个输出文件名。") }
+        guard !plan.sources.contains(where: { $0.url.standardizedFileURL.resolvingSymlinksInPath() == target }) else { throw MuxError.message("The output cannot be a source file. Choose a different name.") }
+        guard !fm.fileExists(atPath: output.path) else { throw MuxError.message("The output already exists. Choose a different name.") }
         let staging = output.deletingLastPathComponent().appendingPathComponent(".muxie-\(UUID().uuidString).partial.mkv")
         defer { try? fm.removeItem(at: staging) }
         let result = try job.run(engine: engine, arguments: plan.arguments(output: staging), progress: progress)
@@ -118,9 +118,9 @@ enum Engine {
         if job.cancelled { throw CancellationError() }
         let probe = try identify(staging, engine: engine, job: job)
         let expected = plan.orderedTracks
-        guard probe.tracks.count == expected.count else { throw MuxError.message("输出轨道数量校验失败，未保存成品。请查看日志。") }
+        guard probe.tracks.count == expected.count else { throw MuxError.message("Output track count verification failed. No output was saved.") }
         for (actual, wanted) in zip(probe.tracks, expected) {
-            guard actual.type == wanted.kind && actual.codec == wanted.codec && (actual.properties.track_name ?? "") == wanted.name && (actual.properties.default_track ?? false) == wanted.isDefault && (actual.properties.forced_track ?? false) == wanted.isForced else { throw MuxError.message("输出轨道信息校验失败，未保存成品。") }
+            guard actual.type == wanted.kind && actual.codec == wanted.codec && (actual.properties.track_name ?? "") == wanted.name && (actual.properties.default_track ?? false) == wanted.isDefault && (actual.properties.forced_track ?? false) == wanted.isForced else { throw MuxError.message("Output track verification failed. No output was saved.") }
         }
         if job.cancelled { throw CancellationError() }
         try job.commit { try fm.moveItem(at: staging, to: output) }

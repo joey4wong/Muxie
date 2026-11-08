@@ -5,6 +5,10 @@ OUT="${OUT_DIR:-$ROOT/dist}"
 BUILD="$ROOT/.build/local"
 mkdir -p "$OUT" "$BUILD"
 APP="$OUT/Muxie.app"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/Support/Info.plist")"
+BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ROOT/Support/Info.plist")"
+# Source-only builds use automatic runtime discovery of installed MKVToolNix.
+# --bundle-installed-engine is for personal local builds, not public distribution.
 if [[ -e "$APP" ]]; then echo "Output already exists: $APP. Move it first, or choose a new OUT_DIR." >&2; exit 1; fi
 ARCH="$(uname -m)"
 if [[ "$ARCH" != arm64 ]]; then echo 'This personal build targets Apple Silicon.' >&2; exit 1; fi
@@ -25,7 +29,7 @@ if [[ "${1:-}" == --bundle-installed-engine ]]; then
     codesign --verify --strict "$ENGINE/mkvmerge"
     codesign --verify --strict "$ENGINE/libs/libQt6Core.6.dylib"
     # These unchanged copies come from the already-installed, signed app.
-    xattr -d com.apple.quarantine "$ENGINE/mkvmerge" "$ENGINE/libs/libQt6Core.6.dylib" 2>/dev/null || true
+    xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
     "$ENGINE/mkvmerge" --version > "$APP/Contents/Resources/Engine-Version.txt"
     "$ENGINE/mkvmerge" --ui-language en_US -J /dev/null >/dev/null 2>&1 || [[ $? == 2 ]]
     echo 'Bundled engine: personal local build. Do not publish this DMG before preparing corresponding source and complete dependency notices.'
@@ -36,4 +40,4 @@ fi
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 codesign --force --sign - --timestamp=none "$APP"
 codesign --verify --deep --strict "$APP"
-echo "Built $APP"
+echo "Built $APP (version $VERSION, build $BUILD_NUMBER)"

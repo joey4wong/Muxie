@@ -10,24 +10,25 @@ import AppKit
     var body: some Scene {
         Window("Muxie", id: "main") {
             ContentView().environmentObject(model)
-                .frame(minWidth: 1100, idealWidth: 1210, minHeight: 740, idealHeight: 790)
+                .frame(minWidth: 780, idealWidth: 980, minHeight: 500, idealHeight: 640)
                 .onOpenURL { url in Task { await model.importFiles([url]) } }
-                .alert("操作未完成", isPresented: $model.showError) {
-                    Button("复制详情") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.error ?? "", forType: .string) }
-                    Button("好", role: .cancel) { }
-                } message: { Text(model.error ?? "未知错误") }
-                .sheet(isPresented: $model.showAbout) { AboutView().environmentObject(model) }
+                .alert("Unable to Complete", isPresented: $model.showError) {
+                    Button("Copy Details") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.error ?? "", forType: .string) }
+                    Button("OK", role: .cancel) { }
+                } message: { Text(model.error ?? "Unknown error") }
+                .sheet(isPresented: $model.showAbout) { AboutView() }
         }
-        .defaultSize(width: 1210, height: 790)
-        .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unifiedCompact)
+        .defaultSize(width: 980, height: 640)
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified)
         .commands {
-            CommandGroup(replacing: .appInfo) { Button("关于 Muxie") { model.showAbout = true } }
+            CommandGroup(replacing: .appInfo) { Button("About Muxie") { model.showAbout = true } }
             CommandGroup(replacing: .newItem) {
-                Button("添加影片…") { model.openFiles() }.keyboardShortcut("o").disabled(model.busy || !model.sources.isEmpty)
-                Button("添加音轨或字幕…") { model.openFiles(additional: true) }.keyboardShortcut("o", modifiers: [.command, .shift]).disabled(model.busy || model.sources.isEmpty)
+                Button("New Project") { model.reset() }.keyboardShortcut("n").disabled(model.busy || model.sources.isEmpty)
+                Button("Open Video…") { model.openFiles() }.keyboardShortcut("o").disabled(model.busy || !model.sources.isEmpty)
+                Button("Add Tracks…") { model.openFiles(additional: true) }.keyboardShortcut("o", modifiers: [.command, .shift]).disabled(model.busy || model.sources.isEmpty)
                 Divider()
-                Button("导出 MKV…") { model.exportPanel() }.keyboardShortcut("e").disabled(!model.canExport)
+                Button("Export MKV…") { model.exportPanel() }.keyboardShortcut("e").disabled(!model.canExport)
             }
         }
     }
@@ -35,13 +36,10 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if ProcessInfo.processInfo.arguments.contains("--self-test") { return .terminateNow }
-        // Active helpers must not outlive the UI without a clear user decision.
         if ExportActivity.shared.active {
-            let alert = NSAlert(); alert.messageText = "正在导出 MKV"; alert.informativeText = "退出会取消导出并清理未完成文件。"; alert.addButton(withTitle: "继续导出"); alert.addButton(withTitle: "取消导出并退出")
+            let alert = NSAlert(); alert.messageText = "Export in progress"; alert.informativeText = "Quit and cancel the export?"; alert.addButton(withTitle: "Continue Export"); alert.addButton(withTitle: "Cancel and Quit")
             if alert.runModal() == .alertFirstButtonReturn { return .terminateCancel }
-            ExportActivity.shared.cancel?()
-            ExportActivity.shared.terminating = true
+            ExportActivity.shared.cancel?(); ExportActivity.shared.terminating = true
             return .terminateLater
         }
         return .terminateNow
