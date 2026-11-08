@@ -24,12 +24,19 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let original = try Data(contentsOf: video)
         let model = AppModel()
         await model.importFiles([video])
-        try check(model.sources.count == 1 && model.tracks.count == 2 && model.canExport, "MP4 import & video/audio identification")
+        try check(model.sources.count == 1 && model.tracks.count == 2, "MP4 import & video/audio identification")
+        try check(model.enabled.isEmpty && model.selected == nil && !model.canExport, "Imported tracks are unchecked with no focused row")
+        try check(model.tracks.map { model.displayName(for: $0) } == ["Video", "Audio"] && model.tracks.allSatisfy { $0.name.isEmpty }, "Unnamed tracks use generic labels without writing metadata")
+        for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
         let remux = run.appendingPathComponent("MP4 转 MKV.mkv")
         await model.export(to: remux)
         try check(model.completed == remux && !model.showError, "MP4 to MKV export & track validation")
         await model.importFiles([fixture.appendingPathComponent("国语音轨.m4a"), fixture.appendingPathComponent("简体中文.srt"), fixture.appendingPathComponent("English.srt")])
         try check(model.sources.count == 4 && model.tracks.count == 5, "Add separate audio & SRT subtitles")
+        let additionalIDs = Set(model.sources.dropFirst().map(\.id))
+        try check(model.tracks.filter { additionalIDs.contains($0.sourceID) }.allSatisfy { !$0.enabled } && model.selected == nil, "Added audio and subtitle tracks also remain unchecked and unfocused")
+        try check(model.tracks.filter { $0.kind == "audio" }.map { model.displayName(for: $0) } == ["Audio 1", "Audio 2"], "Audio numbering is per type, not container track ID")
+        for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
         model.filter = "Audio"
         let audioFiltered = model.filtered.count == 2 && model.filtered.allSatisfy { $0.kind == "audio" }
         model.filter = "Subtitles"
@@ -66,6 +73,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let secondary = AppModel(); await secondary.importFiles([merged]);
         let sourceTracks = secondary.tracks.filter { $0.kind != "video" }
         for track in sourceTracks { secondary.boolBinding(track.id, \.enabled).wrappedValue = false }
+        for track in secondary.tracks where track.kind == "video" { secondary.boolBinding(track.id, \.enabled).wrappedValue = true }
         let silent = run.appendingPathComponent("仅视频.mkv"); await secondary.export(to: silent)
         let silentProbe = try Engine.identify(silent, engine: engine)
         try check(silentProbe.tracks.count == 1 && silentProbe.tracks[0].type == "video", "Remove all audio/subtitles from existing MKV")

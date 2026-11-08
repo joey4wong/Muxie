@@ -1,7 +1,8 @@
 # Third-party notices
 
 Muxie is an independent SwiftUI frontend, not an official MKVToolNix product.
-Muxie's original source and icon assets are licensed under GPL-2.0-only; see LICENSE.
+Muxie's application source is licensed under GPL-2.0-only; see LICENSE.
+The current icon is user-supplied artwork (Support/IconSource.png), converted without redrawing. No third-party authorship or ownership is asserted; the converter script's license does not claim ownership of its input image.
 No MKVToolNix source code is copied into the frontend.
 
 ## MKVToolNix

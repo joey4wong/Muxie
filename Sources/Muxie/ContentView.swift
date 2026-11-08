@@ -9,15 +9,29 @@ private let accent = Color(red: 0.31, green: 0.38, blue: 0.96)
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var targeted = false
+    @State private var showCompactInspector = false
     var body: some View {
-        HStack(spacing: 0) {
-            Group {
-                if model.sources.isEmpty { emptyState }
-                else { trackList }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            if !model.sources.isEmpty {
-                Divider()
-                inspector.frame(width: 250)
+        GeometryReader { geometry in
+            if model.sources.isEmpty {
+                emptyState
+            } else {
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        trackList(compact: geometry.size.width < 720)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        if model.active != nil && geometry.size.width >= 720 {
+                            Divider()
+                            ScrollView { inspector }.frame(width: 238)
+                        }
+                    }.frame(height: geometry.size.height * 0.70)
+                    Button("Export") { model.exportPanel() }
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 32).padding(.vertical, 7)
+                        .buttonStyle(.glassProminent)
+                        .disabled(!model.canExport)
+                        .padding(.top, 16)
+                    Spacer(minLength: 8)
+                }
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -28,13 +42,20 @@ struct ContentView: View {
                 if !model.sources.isEmpty {
                     Button { model.reset() } label: { Image(systemName: "doc.badge.plus") }.help("New Project").disabled(model.busy)
                     Button { model.openFiles(additional: true) } label: { Label("Add Tracks", systemImage: "plus") }.disabled(model.busy)
-                    Button { model.exportPanel() } label: { Label("Export MKV", systemImage: "square.and.arrow.up") }.disabled(!model.canExport)
                 }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if model.exporting || model.importing || model.completed != nil { activityBar }
         }
+        .sheet(isPresented: $showCompactInspector) {
+            VStack(spacing: 0) {
+                HStack { Spacer(); Button("Done") { showCompactInspector = false }.buttonStyle(.glass).keyboardShortcut(.defaultAction) }
+                    .padding(.horizontal, 18).padding(.top, 16)
+                ScrollView { inspector }
+            }.frame(width: 320, height: 320)
+        }
+        .onChange(of: model.sources.isEmpty) { _, empty in if empty { showCompactInspector = false } }
         .overlay {
             if targeted { RoundedRectangle(cornerRadius: 15).strokeBorder(accent, lineWidth: 2).padding(4).allowsHitTesting(false) }
         }
@@ -55,14 +76,13 @@ struct ContentView: View {
     }
     private var emptyState: some View {
         VStack(spacing: 24) {
-            Image(systemName: "film.stack").font(.system(size: 46, weight: .light)).foregroundStyle(.secondary)
-                .frame(width: 112, height: 112).glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28))
+            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().interpolation(.high).frame(width: 112, height: 112)
             Button { model.openFiles() } label: {
                 Label("Open Video…", systemImage: "plus").font(.system(size: 13, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 5)
             }.buttonStyle(.glassProminent).disabled(model.busy)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    private var trackList: some View {
+    private func trackList(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 3) {
                 ForEach(["All", "Video", "Audio", "Subtitles"], id: \.self) { filter in
@@ -80,7 +100,7 @@ struct ContentView: View {
             }.disabled(model.busy)
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(model.filtered) { track in trackRow(track) }
+                    ForEach(model.filtered) { track in trackRow(track, compact: compact) }
                     if model.filtered.isEmpty {
                         Text("No tracks").font(.callout).foregroundStyle(.tertiary).frame(maxWidth: .infinity).padding(.top, 40)
                     }
@@ -88,22 +108,15 @@ struct ContentView: View {
             }
         }.padding(20)
     }
-    private func displayName(_ track: MediaTrack) -> String {
-        if !track.name.isEmpty { return track.name }
-        if let source = model.sources.first(where: { $0.id == track.sourceID }), source.id != model.sources.first?.id {
-            return source.url.deletingPathExtension().lastPathComponent
-        }
-        return "\(track.kindName) \(track.trackID + 1)"
-    }
-    private func trackRow(_ track: MediaTrack) -> some View {
+    private func trackRow(_ track: MediaTrack, compact: Bool) -> some View {
         let selected = track.id == model.selected
         return HStack(spacing: 11) {
-            Toggle("Include \(displayName(track))", isOn: model.boolBinding(track.id, \.enabled)).labelsHidden().toggleStyle(.checkbox)
+            Toggle("Include \(model.displayName(for: track))", isOn: model.boolBinding(track.id, \.enabled)).labelsHidden().toggleStyle(.checkbox)
             Image(systemName: track.symbol).font(.system(size: 17, weight: .medium))
                 .foregroundStyle(track.enabled ? accent : Color.secondary).frame(width: 38, height: 39)
                 .background(accent.opacity(0.065), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 5) {
-                Text(displayName(track)).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(model.displayName(for: track)).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Text(track.codec + (track.detail.isEmpty ? "" : " · " + track.detail)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -114,8 +127,11 @@ struct ContentView: View {
         }.padding(12).contentShape(RoundedRectangle(cornerRadius: 13))
             .background(selected ? accent.opacity(0.06) : Color(nsColor: .controlBackgroundColor).opacity(0.45), in: RoundedRectangle(cornerRadius: 13))
             .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(selected ? accent.opacity(0.4) : .primary.opacity(0.065)))
-            .opacity(track.enabled ? 1 : 0.45)
-            .onTapGesture { model.selected = track.id }
+            .opacity(track.enabled || selected ? 1 : 0.72)
+            .onTapGesture {
+                model.selected = track.id
+                if compact { showCompactInspector = true }
+            }
             .disabled(model.busy)
     }
     private var inspector: some View {
@@ -175,7 +191,7 @@ struct AboutView: View {
         VStack(spacing: 15) {
             Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 80, height: 80)
             Text("Muxie").font(.title.weight(.semibold))
-            Text("1.1.0").font(.callout).foregroundStyle(.secondary)
+            Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.2.0").font(.callout).foregroundStyle(.secondary)
             Text("© 2026 Yunyi Tang").font(.system(size: 11)).foregroundStyle(.secondary)
             Text("GPL-2.0-only").font(.system(size: 11)).foregroundStyle(.secondary)
             Link("MKVToolNix", destination: URL(string: "https://mkvtoolnix.download/")!).font(.system(size: 11))

@@ -61,3 +61,22 @@ Verified on 2026-11-08 in the environment above:
 - Muxie-1.1.0-arm64.dmg uses an English Installation.txt; hdiutil verified all image checksums.
 
 Scope limits remain: short generated fixtures, no full codec matrix, no independent macOS 26-only or Intel test, no dark-mode visual pass, and no actual drag-install from a mounted image. The personal DMG is not a notarized public release.
+
+## Version 1.2.0 (build 3)
+
+Verified on 2026-11-08 in the environment above:
+
+- All 20 integration checks passed. Newly covered: imported tracks unchecked with no focused row; generated Video/Audio labels do not modify metadata; additional tracks remain unchecked; numbering is per track type. All existing mux, Unicode, metadata, overwrite, cancellation and filtering tests still pass after explicitly selecting tracks.
+- Source image is copied unchanged to Support/IconSource.png. New 1024 PNG and all ten ICNS representations decode; generation is reproducible.
+- New icon was visually confirmed in the empty window.
+- Empty window resized to an observed outer frame of 380 × 312 points; project window to 520 × 412 points. The macOS title/toolbar accounts for the difference from the content minimums.
+- Actual file-picker import showed unchecked Video and Audio, no highlighted row, no inspector, and a disabled centered Export button. The toolbar contains only New Project and Add Tracks.
+- Manually checking Video and Audio enabled Export without focusing a row.
+- At compact width, clicking Audio opened a scrollable inspector sheet. A custom name was entered, then Export opened the native save panel and produced a valid MKV.
+- Output retained two tracks; the untouched video track name stayed empty and the edited audio name was Original Audio. Encoded packet hashes matched both input streams:
+  - Video: cff1970d02f8802593e5f2b59f5f5809f91356a55da14a9044506e3944962d5b
+  - Audio: 0cb3c98ab21f94a6a82a22120922c319a1a89310ae32151f05b279e4d1169359
+- Widening the window restored the inline inspector; Export remained centered on the entire window, not the track column.
+- Version metadata is 1.2.0, build 3, English-only localization. Bundle signature verification passed.
+
+Packaging: Muxie-1.2.0-arm64.dmg was created as HFS/UDZO and hdiutil verified all image checksums. Shell syntax, plist lint and git diff whitespace checks passed. No actual drag-install from a mounted image was performed. Previous hardware/codec/notarization scope limits still apply.

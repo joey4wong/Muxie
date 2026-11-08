@@ -25,6 +25,12 @@ import UniformTypeIdentifiers
     var canExport: Bool { !busy && Engine.executable != nil && enabled.contains { $0.kind == "video" } }
     var totalBytes: Int64 { sources.reduce(0) { $0 + $1.byteSize } }
     var filtered: [MediaTrack] { tracks.filter { filter == "All" || $0.filterName == filter } }
+    func displayName(for track: MediaTrack) -> String {
+        if !track.name.isEmpty { return track.name }
+        let peers = tracks.filter { $0.kind == track.kind }
+        guard peers.count > 1, let index = peers.firstIndex(where: { $0.id == track.id }) else { return track.kindName }
+        return "\(track.kindName) \(index + 1)"
+    }
     func fail(_ text: String) { error = text; showError = true }
     func openFiles(additional: Bool = false) {
         guard !busy else { return }
@@ -59,11 +65,9 @@ import UniformTypeIdentifiers
                     if let dimensions = t.properties.pixel_dimensions { detail = dimensions.replacingOccurrences(of: "x", with: " × ") }
                     else if let channels = t.properties.audio_channels { detail = "\(channels) ch" }
                     else { detail = "" }
-                    added.append(MediaTrack(sourceID: sourceID, trackID: t.id, kind: t.type, codec: t.codec, name: t.properties.track_name ?? "", language: t.properties.language_ietf ?? t.properties.language ?? "und", isDefault: isPrimary ? (t.properties.default_track ?? false) : false, isForced: t.properties.forced_track ?? false, enabled: isPrimary || t.type != "video", detail: detail))
+                    added.append(MediaTrack(sourceID: sourceID, trackID: t.id, kind: t.type, codec: t.codec, name: t.properties.track_name ?? "", language: t.properties.language_ietf ?? t.properties.language ?? "und", isDefault: isPrimary ? (t.properties.default_track ?? false) : false, isForced: t.properties.forced_track ?? false, enabled: false, detail: detail))
                 }
                 tracks += added
-                if selected == nil { selected = added.first { $0.kind == "audio" }?.id ?? added.first?.id }
-                if !isPrimary { selected = added.first { $0.enabled }?.id ?? selected }
             } catch { failures.append(error.localizedDescription) }
         }
         importing = false

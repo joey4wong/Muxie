@@ -10,7 +10,7 @@ import AppKit
     var body: some Scene {
         Window("Muxie", id: "main") {
             ContentView().environmentObject(model)
-                .frame(minWidth: 780, idealWidth: 980, minHeight: 500, idealHeight: 640)
+                .frame(minWidth: model.sources.isEmpty ? 380 : 520, idealWidth: 760, minHeight: model.sources.isEmpty ? 280 : 360, idealHeight: 520)
                 .onOpenURL { url in Task { await model.importFiles([url]) } }
                 .alert("Unable to Complete", isPresented: $model.showError) {
                     Button("Copy Details") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.error ?? "", forType: .string) }
@@ -18,7 +18,7 @@ import AppKit
                 } message: { Text(model.error ?? "Unknown error") }
                 .sheet(isPresented: $model.showAbout) { AboutView() }
         }
-        .defaultSize(width: 980, height: 640)
+        .defaultSize(width: 760, height: 520)
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
         .commands {
@@ -28,7 +28,7 @@ import AppKit
                 Button("Open Video…") { model.openFiles() }.keyboardShortcut("o").disabled(model.busy || !model.sources.isEmpty)
                 Button("Add Tracks…") { model.openFiles(additional: true) }.keyboardShortcut("o", modifiers: [.command, .shift]).disabled(model.busy || model.sources.isEmpty)
                 Divider()
-                Button("Export MKV…") { model.exportPanel() }.keyboardShortcut("e").disabled(!model.canExport)
+                Button("Export…") { model.exportPanel() }.keyboardShortcut("e").disabled(!model.canExport)
             }
         }
     }
