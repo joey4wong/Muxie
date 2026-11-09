@@ -38,8 +38,9 @@ xcrun swiftc -disable-sandbox -swift-version 5 -O -target arm64-apple-macosx26.0
     "$ROOT"/Sources/Muxie/*.swift -o "$BUILD/Muxie"
 cp "$BUILD/Muxie" "$APP/Contents/MacOS/Muxie"
 cp "$PLIST" "$APP/Contents/Info.plist"
-cp "$ROOT/Support/AppIcon.icns" "$APP/Contents/Resources/"
-xcrun actool "$ROOT/Support/Assets.xcassets" --compile "$APP/Contents/Resources" --platform macosx --minimum-deployment-target 26.0 --accent-color AccentColor --output-format human-readable-text --output-partial-info-plist "$BUILD/AssetInfo.plist" > "$BUILD/assets.log" 2>&1 || { cat "$BUILD/assets.log"; exit 1; }
+cp "$ROOT/Support/Knot.png" "$APP/Contents/Resources/"
+# AppIcon.icon carries the default and dark appearances; actool also writes the AppIcon.icns fallback.
+xcrun actool "$ROOT/Support/Assets.xcassets" "$ROOT/Support/AppIcon.icon" --app-icon AppIcon --compile "$APP/Contents/Resources" --platform macosx --minimum-deployment-target 26.0 --accent-color AccentColor --output-format human-readable-text --output-partial-info-plist "$BUILD/AssetInfo.plist" > "$BUILD/assets.log" 2>&1 || { cat "$BUILD/assets.log"; exit 1; }
 cp "$ROOT/LICENSE" "$APP/Contents/Resources/Licenses/GPL-2.0.txt"
 cp "$ROOT/THIRD-PARTY-NOTICES.md" "$APP/Contents/Resources/Licenses/"
 cp "$SPARKLE_DIR/LICENSE" "$APP/Contents/Resources/Licenses/Sparkle-LICENSE.txt"

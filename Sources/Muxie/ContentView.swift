@@ -94,7 +94,7 @@ struct ContentView: View {
     }
     private var emptyState: some View {
         VStack(spacing: 24) {
-            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().interpolation(.high).frame(width: 112, height: 112)
+            KnotMark().frame(width: 132, height: 132)
             Button { model.openFiles() } label: {
                 Label("Open Video…", systemImage: "plus").font(.system(size: 13, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 5)
             }.buttonStyle(NeutralGlassButtonStyle(compact: false)).disabled(model.busy)
@@ -219,7 +219,7 @@ struct AboutView: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(spacing: 15) {
-            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 80, height: 80)
+            KnotMark().frame(width: 92, height: 92)
             Text("Muxie").font(.title.weight(.semibold))
             Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.0").font(.callout).foregroundStyle(.secondary)
             Text("© 2026 Yunyi Tang").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -228,5 +228,17 @@ struct AboutView: View {
             Text("© Moritz Bunkus and contributors").font(.system(size: 10)).foregroundStyle(.tertiary)
             Button("Done") { dismiss() }.buttonStyle(NeutralGlassButtonStyle()).keyboardShortcut(.defaultAction).padding(.top, 8)
         }.padding(30).frame(width: 320)
+    }
+}
+
+/// The knot artwork on a transparent background, shown directly on the window instead of inside the Dock tile.
+struct KnotMark: View {
+    private static let image: NSImage? = Bundle.main.url(forResource: "Knot", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
+    var body: some View {
+        if let image = Self.image {
+            Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+        } else {
+            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().aspectRatio(contentMode: .fit)
+        }
     }
 }
