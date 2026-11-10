@@ -21,6 +21,7 @@ import UniformTypeIdentifiers
     @Published var trackPage = 0
     @Published var workspaceScreenHeight: CGFloat = 900
     var job: RunningJob?
+    private var isoMounts: [UUID: BluRayMount] = [:]
     var active: MediaTrack? { tracks.first { $0.id == selected } }
     var enabled: [MediaTrack] { tracks.filter(\.enabled) }
     var busy: Bool { importing || exporting }
@@ -50,8 +51,8 @@ import UniformTypeIdentifiers
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = additional
         panel.title = additional ? "Add Tracks" : "Open Video"
         panel.prompt = additional ? "Add" : "Open"
-        if let source = sources.first { panel.directoryURL = source.url.deletingLastPathComponent() }
-        panel.allowedContentTypes = ["mkv", "mp4", "m4v", "mov", "avi", "webm", "mka", "mks", "srt", "ass", "ssa", "vtt", "sup", "ac3", "eac3", "dts", "aac", "m4a", "mp3", "flac", "wav", "ogg", "opus"].compactMap { UTType(filenameExtension: $0) }
+        if let source = sources.first { panel.directoryURL = source.displayURL.deletingLastPathComponent() }
+        panel.allowedContentTypes = (["iso"] + ["mkv", "mp4", "m4v", "mov", "avi", "webm", "mka", "mks", "srt", "ass", "ssa", "vtt", "sup", "ac3", "eac3", "dts", "aac", "m4a", "mp3", "flac", "wav", "ogg", "opus"]).compactMap { UTType(filenameExtension: $0) }
         panel.begin { [weak self] result in if result == .OK { Task { @MainActor in await self?.importFiles(panel.urls) } } }
     }
     func importFiles(_ urls: [URL]) async {
@@ -62,16 +63,44 @@ import UniformTypeIdentifiers
         for url in urls {
             guard url.isFileURL else { continue }
             let canonical = url.standardizedFileURL.resolvingSymlinksInPath()
-            if sources.contains(where: { $0.url.standardizedFileURL.resolvingSymlinksInPath() == canonical }) { continue }
+            if sources.contains(where: { $0.displayURL.standardizedFileURL.resolvingSymlinksInPath() == canonical }) { continue }
+            if url.pathExtension.lowercased() == "iso" {
+                if !isoMounts.isEmpty || sources.contains(where: { $0.originURL != nil }) {
+                    failures.append("Only one Blu-ray ISO can be open at a time.")
+                    continue
+                }
+                if !sources.isEmpty { failures.append("Open the Blu-ray ISO before adding other files."); continue }
+            }
+            var openedMount: BluRayMount?
             do {
-                let probe = try await Task.detached(priority: .userInitiated) { try Engine.identify(url, engine: engine) }.value
+                let importURL: URL
+                let originURL: URL?
+                let featureNote: String?
+                if url.pathExtension.lowercased() == "iso" {
+                    let mount = try await Task.detached(priority: .userInitiated) { try BluRayISO.attach(iso: canonical) }.value
+                    openedMount = mount
+                    importURL = mount.m2tsURL
+                    originURL = canonical
+                    featureNote = "Main feature: \(mount.m2tsName) (\(BluRayISO.bytesDescription(mount.m2tsBytes)))"
+                } else {
+                    importURL = canonical
+                    originURL = nil
+                    featureNote = nil
+                }
+                let probe = try await Task.detached(priority: .userInitiated) { try Engine.identify(importURL, engine: engine) }.value
                 let supported = probe.tracks.filter { ["video", "audio", "subtitles"].contains($0.type) }
                 guard !supported.isEmpty else { throw MuxError.message("\(url.lastPathComponent) contains no supported tracks.") }
                 let isPrimary = sources.isEmpty
                 if isPrimary && !supported.contains(where: { $0.type == "video" }) { throw MuxError.message("Open a video before adding audio or subtitles.") }
                 let sourceID = UUID()
-                let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                sources.append(MediaSource(id: sourceID, url: url, container: probe.container.type ?? url.pathExtension.uppercased(), byteSize: Int64(bytes)))
+                let bytes: Int64
+                if let openedMount {
+                    bytes = openedMount.m2tsBytes
+                } else {
+                    bytes = Int64((try? importURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                }
+                sources.append(MediaSource(id: sourceID, url: importURL, originURL: originURL, container: probe.container.type ?? importURL.pathExtension.uppercased(), byteSize: bytes, featureNote: featureNote))
+                if let openedMount { isoMounts[sourceID] = openedMount; openedMount = nil }
                 var added: [MediaTrack] = []
                 for t in supported {
                     let detail: String
@@ -81,7 +110,10 @@ import UniformTypeIdentifiers
                     added.append(MediaTrack(sourceID: sourceID, trackID: t.id, kind: t.type, codec: t.codec, name: t.properties.track_name ?? "", language: t.properties.language_ietf ?? t.properties.language ?? "und", isDefault: isPrimary ? (t.properties.default_track ?? false) : false, isForced: t.properties.forced_track ?? false, enabled: false, detail: detail))
                 }
                 tracks += added
-            } catch { failures.append(error.localizedDescription) }
+            } catch {
+                if let openedMount { BluRayISO.detach(openedMount) }
+                failures.append(error.localizedDescription)
+            }
         }
         importing = false
         if !failures.isEmpty { fail(failures.joined(separator: "\n\n")) }
@@ -104,15 +136,36 @@ import UniformTypeIdentifiers
     func removeSource(_ source: MediaSource) {
         guard !busy, source.id != sources.first?.id else { return }
         tracks.removeAll { $0.sourceID == source.id }; sources.removeAll { $0.id == source.id }
+        if let mount = isoMounts.removeValue(forKey: source.id) { BluRayISO.detach(mount) }
         if !tracks.contains(where: { $0.id == selected }) { selected = tracks.first?.id }; completed = nil
     }
-    func reset() { guard !busy else { return }; sources = []; tracks = []; selected = nil; completed = nil; warning = nil; filter = "All"; trackPage = 0 }
+    func reset() {
+        guard !busy else { return }
+        detachAllISO()
+        sources = []; tracks = []; selected = nil; completed = nil; warning = nil; filter = "All"; trackPage = 0
+    }
+    func recoverStaleISOMounts() { BluRayISO.recoverStaleMounts(); isoMounts = [:] }
+    func prepareForQuit() { detachAllISO() }
+    private func detachAllISO() {
+        for mount in isoMounts.values { BluRayISO.detach(mount) }
+        isoMounts = [:]
+    }
+    private func ensureISOMounted() throws {
+        for index in sources.indices {
+            guard let iso = sources[index].originURL, isoMounts[sources[index].id] == nil else { continue }
+            let mount = try BluRayISO.attach(iso: iso)
+            isoMounts[sources[index].id] = mount
+            sources[index].url = mount.m2tsURL
+            sources[index].byteSize = mount.m2tsBytes
+            sources[index].featureNote = "Main feature: \(mount.m2tsName) (\(BluRayISO.bytesDescription(mount.m2tsBytes)))"
+        }
+    }
     func exportPanel() {
         guard canExport, let source = sources.first else { return }
         let panel = NSSavePanel(); panel.title = "Export MKV"; panel.prompt = "Export"; panel.canCreateDirectories = true
         panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
-        panel.nameFieldStringValue = source.url.deletingPathExtension().lastPathComponent + "-muxie.mkv"
-        panel.directoryURL = source.url.deletingLastPathComponent()
+        panel.nameFieldStringValue = source.displayURL.deletingPathExtension().lastPathComponent + "-muxie.mkv"
+        panel.directoryURL = source.displayURL.deletingLastPathComponent()
         panel.begin { [weak self] result in
             guard result == .OK, let url = panel.url else { return }
             Task { @MainActor in await self?.export(to: url) }
@@ -121,9 +174,11 @@ import UniformTypeIdentifiers
     func export(to output: URL) async {
         guard canExport, let engine = Engine.executable else { return }
         exporting = true; progress = 0; completed = nil; warning = nil
+        do { try ensureISOMounted() } catch { exporting = false; fail(error.localizedDescription); return }
         let plan = ExportPlan(sources: sources, tracks: tracks); let running = RunningJob(); job = running
         ExportActivity.shared.active = true; ExportActivity.shared.cancel = { running.cancel() }
         defer {
+            detachAllISO()
             ExportActivity.shared.active = false; ExportActivity.shared.cancel = nil
             if ExportActivity.shared.terminating { NSApp.reply(toApplicationShouldTerminate: true) }
         }
