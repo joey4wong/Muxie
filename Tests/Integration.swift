@@ -260,6 +260,9 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         func hbValue(_ flag: String) -> String? { hbArgs.firstIndex(of: flag).map { hbArgs[$0 + 1] } }
         try check(hbValue("--aencoder") == "copy:aac,av_aac,av_aac,copy:aac" && hbValue("--ab") == "192,384,384,384" && hbValue("--mixdown") == "stereo,none,5point1,none" && hbValue("--audio-fallback") == "av_aac", "Compress audio arguments: copy AAC, encode the rest, 7.1 at 384 kbps as 5.1")
         try check(hbArgs.contains("vt_h265_10bit") && !hbArgs.contains("--encopts") && hbValue("--encoder-preset") == "quality", "Compress video arguments use VideoToolbox H.265 10-bit without x265 options")
+        let swArgs = Engine.handbrakeArguments(input: URL(fileURLWithPath: "/in.mkv"), output: URL(fileURLWithPath: "/out.mkv"), profile: CompressProfile(height: 2160), encoder: .software, sourceAudioChannels: [2], sourceAudioIsAAC: [true])
+        func swValue(_ flag: String) -> String? { swArgs.firstIndex(of: flag).map { swArgs[$0 + 1] } }
+        try check(swValue("--encoder") == "x265_10bit" && swValue("--encoder-preset") == "medium" && swValue("--quality") == "23" && swValue("--encopts") == "aq-mode=3:no-sao=1" && swValue("--encoder-profile") == "main10", "Software encoder uses x265 10-bit with the RF scale")
         func enqueueEnabled(_ model: AppModel, output: URL) {
             for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
             model.enqueueExport(to: output)

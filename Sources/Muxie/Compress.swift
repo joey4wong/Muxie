@@ -9,17 +9,40 @@ enum ExportMode: String, CaseIterable, Identifiable {
     var label: String { self == .mux ? "Mux" : "Compress" }
 }
 
+/// Which H.265 encoder Compress uses. Chosen in Settings; the default is the Apple hardware encoder.
+enum CompressEncoder: String, CaseIterable, Identifiable {
+    case hardware, software
+    var id: String { rawValue }
+    static let defaultsKey = "compressEncoder"
+    static var current: CompressEncoder {
+        get { UserDefaults.standard.string(forKey: defaultsKey).flatMap(CompressEncoder.init(rawValue:)) ?? .hardware }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+    var label: String { self == .hardware ? "Hardware (Apple VideoToolbox)" : "Software (x265)" }
+    var detail: String {
+        self == .hardware
+            ? "Much faster, cooler and quieter. Files come out larger than x265 at similar quality."
+            : "Slow, but the smallest files and the best detail and film grain."
+    }
+    var handbrakeEncoder: String { self == .hardware ? "vt_h265_10bit" : "x265_10bit" }
+}
+
 enum CompressProfile {
     case hd, uhd
     init(height: Int) { self = height > 1080 ? .uhd : .hd }
     /// HandBrake VideoToolbox quality (0–100, higher is better); tuned by the owner after real-file tests.
     var quality: Int { self == .uhd ? 60 : 65 }
+    /// x265 constant quality (RF, lower is better).
+    var rf: Int { self == .uhd ? 23 : 21 }
     var maxWidth: Int { self == .uhd ? 3840 : 1920 }
     var maxHeight: Int { self == .uhd ? 2160 : 1080 }
 }
 
 enum CompressSettings {
-    static let encoder = "vt_h265_10bit"
+    static let encoder = CompressEncoder.hardware.handbrakeEncoder
+    static let x265Preset = "medium"
+    // No tune: HandBrake's "None" means the option is omitted. Passing the word "none" makes x265 reject the preset.
+    static let x265ExtraOptions = "aq-mode=3:no-sao=1"
     /// The VideoToolbox encoder offers `speed` and `quality`; quality is the better picture per bit.
     static let encoderPreset = "quality"
     /// Included when HandBrake lists main10 for vt_h265_10bit (`HandBrakeCLI --encoder-profile-list vt_h265_10bit`).
@@ -90,15 +113,20 @@ extension Engine {
     /// AAC sources with at most 5.1 channels are copied untouched (no generation loss, no encode time).
     static func audioIsCopied(channels: Int, isAAC: Bool) -> Bool { isAAC && channels <= CompressSettings.maxAACChannels }
 
-    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile, sourceAudioChannels: [Int], sourceAudioIsAAC: [Bool] = []) -> [String] {
+    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile, encoder: CompressEncoder = .hardware, sourceAudioChannels: [Int], sourceAudioIsAAC: [Bool] = []) -> [String] {
         var args = [
             "--input", input.path,
             "--output", output.path,
             "--format", "av_mkv",
-            "--encoder", CompressSettings.encoder,
+            "--encoder", encoder.handbrakeEncoder,
             "--encoder-profile", CompressSettings.encoderProfile,
-            "--encoder-preset", CompressSettings.encoderPreset,
-            "--quality", String(profile.quality),
+        ]
+        if encoder == .hardware {
+            args += ["--encoder-preset", CompressSettings.encoderPreset, "--quality", String(profile.quality)]
+        } else {
+            args += ["--encoder-preset", CompressSettings.x265Preset, "--encopts", CompressSettings.x265ExtraOptions, "--quality", String(profile.rf)]
+        }
+        args += [
             "--maxWidth", String(profile.maxWidth),
             "--maxHeight", String(profile.maxHeight),
             "--cfr",
@@ -119,7 +147,7 @@ extension Engine {
         return args
     }
 
-    static func exportCompressed(plan: ExportPlan, output: URL, mkvmerge: URL, handbrake: URL, job: RunningJob, progress: @escaping @Sendable (Double) -> Void) throws -> String? {
+    static func exportCompressed(plan: ExportPlan, output: URL, mkvmerge: URL, handbrake: URL, job: RunningJob, encoder: CompressEncoder = CompressEncoder.current, progress: @escaping @Sendable (Double) -> Void) throws -> String? {
         let fm = FileManager.default
         let target = output.standardizedFileURL.resolvingSymlinksInPath()
         guard !plan.sources.contains(where: { $0.url.standardizedFileURL.resolvingSymlinksInPath() == target }) else {
@@ -149,12 +177,12 @@ extension Engine {
         let sourceAudioChannels = sourceAudioTracks.map { $0.properties.audio_channels ?? 2 }
         let sourceAudioIsAAC = sourceAudioTracks.map { $0.codec.uppercased().contains("AAC") }
         let profile = CompressProfile(height: sourceHeight)
-        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile, sourceAudioChannels: sourceAudioChannels, sourceAudioIsAAC: sourceAudioIsAAC)
+        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile, encoder: encoder, sourceAudioChannels: sourceAudioChannels, sourceAudioIsAAC: sourceAudioIsAAC)
         let hbResult = try job.runHandBrake(engine: handbrake, arguments: hbArgs) { value in
             progress(0.12 + value * 0.88)
         }
         let hbLog = String(decoding: hbResult.1, as: UTF8.self)
-        if let encoderError = Self.handBrakeMissingEncoderMessage(in: hbLog) {
+        if let encoderError = Self.handBrakeMissingEncoderMessage(in: hbLog, encoder: encoder) {
             throw MuxError.message(encoderError)
         }
         guard hbResult.0 == 0 else { throw MuxError.message(hbLog) }
@@ -211,10 +239,10 @@ extension Engine {
     }
 
     /// One-line error when HandBrake does not offer the VideoToolbox H.265 10-bit encoder.
-    static func handBrakeMissingEncoderMessage(in log: String) -> String? {
+    static func handBrakeMissingEncoderMessage(in log: String, encoder: CompressEncoder = .hardware) -> String? {
         let upper = log.uppercased()
         guard upper.contains("INVALID VIDEO ENCODER") || upper.contains("UNKNOWN ENCODER") else { return nil }
-        return "HandBrake does not support the Apple VideoToolbox H.265 10-bit encoder (vt_h265_10bit)."
+        return "HandBrake does not support the \(encoder.label) H.265 10-bit encoder (\(encoder.handbrakeEncoder))."
     }
 }
 

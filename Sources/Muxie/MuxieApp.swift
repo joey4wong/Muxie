@@ -24,6 +24,7 @@ import AppKit
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
         .windowResizability(.contentMinSize)
+        Settings { SettingsView() }
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Muxie") { model.showAbout = true }

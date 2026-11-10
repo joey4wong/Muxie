@@ -301,9 +301,10 @@ import UniformTypeIdentifiers
         }
         do {
             let handbrake = Engine.handbrakeExecutable
+            let encoder = CompressEncoder.current
             let warnings = try await Task.detached(priority: .userInitiated) { [running] in
                 if mode == .compress, let handbrake {
-                    return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running) { value in
+                    return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running, encoder: encoder) { value in
                         Task { @MainActor in self.updateQueueProgress(jobID: jobID, value: value) }
                     }
                 }
@@ -381,9 +382,10 @@ import UniformTypeIdentifiers
         do {
             let mode = exportMode
             let handbrake = Engine.handbrakeExecutable
+            let encoder = CompressEncoder.current
             let warnings = try await Task.detached(priority: .userInitiated) { [weak self] in
                 if mode == .compress, let handbrake {
-                    return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running) { [weak self] value in
+                    return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running, encoder: encoder) { [weak self] value in
                         Task { @MainActor in self?.progress = value }
                     }
                 }
