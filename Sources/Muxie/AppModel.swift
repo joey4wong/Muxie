@@ -211,7 +211,9 @@ import UniformTypeIdentifiers
         let panel = NSSavePanel(); panel.title = "Export MKV"; panel.prompt = "Export"; panel.canCreateDirectories = true
         panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
         let baseName = source.displayURL.deletingPathExtension().lastPathComponent
-        if exportMode == .compress {
+        if let scene = sceneName(from: baseName) {
+            panel.nameFieldStringValue = scene
+        } else if exportMode == .compress {
             panel.nameFieldStringValue = baseName + "-compressed.mkv"
         } else if source.displayURL.pathExtension.lowercased() == "mkv" {
             panel.nameFieldStringValue = baseName + "-muxie.mkv"
@@ -223,6 +225,21 @@ import UniformTypeIdentifiers
             guard result == .OK, let url = panel.url else { return }
             Task { @MainActor in self?.enqueueExport(to: url) }
         }
+    }
+    /// Standard release name for films that are compressed (Compress mode) or already HEVC 10-bit 1080p or below:
+    /// Title.Year.1080p.BluRay.x265.10bit.AAC-Joey.mkv (4K in place of 1080p for UHD). Nil if no year can be found in the file name.
+    func sceneName(from baseName: String) -> String? {
+        guard exportMode == .compress || !compressEligible else { return nil }
+        let cleaned = baseName.replacingOccurrences(of: "-compressed", with: "").replacingOccurrences(of: "-muxie", with: "")
+        let words = cleaned.split(whereSeparator: { " ._()[]".contains($0) }).map(String.init)
+        guard let yearIndex = words.lastIndex(where: { $0.count == 4 && $0.hasPrefix("19") || $0.count == 4 && $0.hasPrefix("20") }),
+              words[yearIndex].allSatisfy(\.isNumber), yearIndex > 0 else { return nil }
+        let bad = CharacterSet(charactersIn: "/:\\*?\"<>|,'’!")
+        let title = words[..<yearIndex].map { String($0.unicodeScalars.filter { !bad.contains($0) }) }.filter { !$0.isEmpty }.joined(separator: ".")
+        guard !title.isEmpty else { return nil }
+        let height = tracks.first(where: { $0.kind == "video" && $0.enabled })?.detail.split(separator: "×").last.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) } ?? 1080
+        let res = (exportMode == .compress && height > 1080) ? "4K" : "1080p"
+        return "\(title).\(words[yearIndex]).\(res).BluRay.x265.10bit.AAC-Joey.mkv"
     }
     func enqueueExport(to output: URL) {
         let target = output.standardizedFileURL.resolvingSymlinksInPath()
