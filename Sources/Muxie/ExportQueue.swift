@@ -7,6 +7,7 @@ import SwiftUI
 enum QueueJobState: Equatable {
     case queued
     case running(progress: Double)
+    case paused(progress: Double)
     case done
     case failed(String)
     case cancelled
@@ -22,8 +23,14 @@ struct QueueJob: Identifiable, Equatable, Sendable {
     var warning: String?
 
     var isRunning: Bool { if case .running = state { return true }; return false }
-    var isPending: Bool { state == .queued || isRunning }
-    var progress: Double { if case .running(let value) = state { return value }; return isRunning ? 0 : 0 }
+    var isPaused: Bool { if case .paused = state { return true }; return false }
+    var isPending: Bool { state == .queued || isRunning || isPaused }
+    var progress: Double {
+        switch state {
+        case .running(let value), .paused(let value): return value
+        default: return 0
+        }
+    }
 
     static func snapshot(sources: [MediaSource], tracks: [MediaTrack], mode: ExportMode, output: URL) -> QueueJob {
         let snapSources = sources.map { source -> MediaSource in
@@ -41,6 +48,7 @@ struct QueueJob: Identifiable, Equatable, Sendable {
         switch state {
         case .queued: return "Queued"
         case .running: return "Running"
+        case .paused: return "Paused"
         case .done: return "Done"
         case .failed: return "Failed"
         case .cancelled: return "Cancelled"

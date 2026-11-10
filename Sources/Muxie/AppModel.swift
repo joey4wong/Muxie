@@ -25,14 +25,19 @@ import UniformTypeIdentifiers
     @Published var queueJobs: [QueueJob] = []
     var job: RunningJob?
     private var isoMounts: [UUID: BluRayMount] = [:]
-    private var queueISOMounts: [UUID: BluRayMount] = [:]
-    private var queueProcessor: Task<Void, Never>?
+    /// Per queue job (a paused job keeps its disc mounted while another job runs), then per source.
+    private var queueISOMounts: [UUID: [UUID: BluRayMount]] = [:]
+    private var queueRunning: [UUID: RunningJob] = [:]
+    private var activeQueueTasks = 0
+    /// Set when the user pauses: the queue waits for Resume or Run Now instead of starting the next job.
+    private var queueHoldFlag = false
+    private var queueHeld: Bool { queueHoldFlag && queueJobs.contains { $0.isPaused } }
     private var queueSleeping = false
     var active: MediaTrack? { tracks.first { $0.id == selected } }
     var enabled: [MediaTrack] { tracks.filter(\.enabled) }
     var busy: Bool { importing || queueHasPendingExport }
     var queueHasPendingExport: Bool { queueJobs.contains { $0.isPending } }
-    var queueBadgeCount: Int { queueJobs.filter { $0.state == .queued || $0.isRunning }.count }
+    var queueBadgeCount: Int { queueJobs.filter { $0.isPending }.count }
     var runningQueueJob: QueueJob? { queueJobs.first { $0.isRunning } }
     var queueActivityActive: Bool { runningQueueJob != nil }
     var canExport: Bool {
@@ -175,14 +180,17 @@ import UniformTypeIdentifiers
     func prepareForQuit() {
         queueJobs.removeAll()
         detachAllISO()
-        detachQueueISO()
+        detachAllQueueISO()
     }
     private func detachAllISO() {
         for mount in isoMounts.values { BluRayISO.detach(mount) }
         isoMounts = [:]
     }
-    private func detachQueueISO() {
-        for mount in queueISOMounts.values { BluRayISO.detach(mount) }
+    private func detachQueueISO(jobID: UUID) {
+        for mount in (queueISOMounts.removeValue(forKey: jobID) ?? [:]).values { BluRayISO.detach(mount) }
+    }
+    private func detachAllQueueISO() {
+        for mounts in queueISOMounts.values { for mount in mounts.values { BluRayISO.detach(mount) } }
         queueISOMounts = [:]
     }
     private func ensureISOMounted() async throws {
@@ -195,12 +203,12 @@ import UniformTypeIdentifiers
             sources[index].appendedParts = mount.extraParts
         }
     }
-    private func ensureQueueISOMounted(sources: inout [MediaSource]) async throws {
+    private func ensureQueueISOMounted(jobID: UUID, sources: inout [MediaSource]) async throws {
         for index in sources.indices {
-            guard let iso = sources[index].originURL, queueISOMounts[sources[index].id] == nil else { continue }
+            guard let iso = sources[index].originURL, queueISOMounts[jobID]?[sources[index].id] == nil else { continue }
             let sourceID = sources[index].id
             let mount = try await Task.detached(priority: .userInitiated) { try BluRayISO.attach(iso: iso) }.value
-            queueISOMounts[sourceID] = mount
+            queueISOMounts[jobID, default: [:]][sourceID] = mount
             sources[index].url = mount.mediaURL
             sources[index].byteSize = mount.inputBytes
             sources[index].appendedParts = mount.extraParts
@@ -252,49 +260,87 @@ import UniformTypeIdentifiers
         }
         queueJobs.append(QueueJob.snapshot(sources: sources, tracks: tracks, mode: exportMode, output: output))
         reset()
-        startQueueProcessorIfNeeded()
+        scheduleNextQueueJob()
     }
-    private func startQueueProcessorIfNeeded() {
-        guard queueProcessor == nil else { return }
-        ExportActivity.shared.active = queueHasPendingExport
-        queueProcessor = Task { @MainActor in
-            defer { queueProcessor = nil }
-            while let index = queueJobs.firstIndex(where: { $0.state == .queued }) {
-                await runQueueJob(at: index)
-            }
-            let failedCount = queueJobs.filter { if case .failed = $0.state { return true }; return false }.count
-            if failedCount > 0 { fail(failedCount == 1 ? "1 queued export failed. Open the export queue for details." : "\(failedCount) queued exports failed. Open the export queue for details.") }
-            if queueSleeping {
-                IdleSleepActivity.end()
-                queueSleeping = false
-            }
-            ExportActivity.shared.active = false
-            ExportActivity.shared.cancel = nil
-            if ExportActivity.shared.terminating { NSApp.reply(toApplicationShouldTerminate: true) }
+    /// One job runs at a time. A paused job does not count as running, so another job can run meanwhile.
+    private func scheduleNextQueueJob() {
+        if queueJobs.contains(where: { $0.isRunning }) { return }
+        if queueHeld { endQueueSleep(); return }
+        if let next = queueJobs.first(where: { $0.state == .queued }) { startQueueJob(next.id); return }
+        // Nothing else is waiting: carry on with a paused job instead of leaving it forgotten.
+        if let paused = queueJobs.first(where: { $0.isPaused }) { resumeQueueJob(paused.id); return }
+        guard activeQueueTasks == 0 else { return }
+        let failedCount = queueJobs.filter { if case .failed = $0.state { return true }; return false }.count
+        if failedCount > 0 { fail(failedCount == 1 ? "1 queued export failed. Open the export queue for details." : "\(failedCount) queued exports failed. Open the export queue for details.") }
+        endQueueSleep()
+        ExportActivity.shared.active = false
+        ExportActivity.shared.cancel = nil
+        if ExportActivity.shared.terminating { NSApp.reply(toApplicationShouldTerminate: true) }
+    }
+    private func beginQueueSleep() {
+        if !queueSleeping { IdleSleepActivity.begin(); queueSleeping = true }
+    }
+    private func endQueueSleep() {
+        if queueSleeping { IdleSleepActivity.end(); queueSleeping = false }
+    }
+    private func startQueueJob(_ id: UUID) {
+        guard let index = queueJobs.firstIndex(where: { $0.id == id }), queueJobs[index].state == .queued else { return }
+        queueHoldFlag = false
+        beginQueueSleep()
+        queueJobs[index].state = .running(progress: 0)
+        let running = RunningJob()
+        queueRunning[id] = running
+        ExportActivity.shared.active = true
+        ExportActivity.shared.cancel = { [weak self] in MainActor.assumeIsolated { self?.queueRunning.values.forEach { $0.cancel() } } }
+        activeQueueTasks += 1
+        Task { @MainActor in
+            await runQueueJob(id, running: running)
+            activeQueueTasks -= 1
+            scheduleNextQueueJob()
         }
     }
-    private func runQueueJob(at index: Int) async {
-        let jobID = queueJobs[index].id
-        if !queueSleeping {
-            IdleSleepActivity.begin()
-            queueSleeping = true
-        }
-        self[job: jobID].state = .running(progress: 0)
+    func pauseQueueJob(_ id: UUID) {
+        guard let index = queueJobs.firstIndex(where: { $0.id == id }), case .running(let value) = queueJobs[index].state else { return }
+        queueRunning[id]?.pause()
+        queueJobs[index].state = .paused(progress: value)
+        queueHoldFlag = true
+        endQueueSleep()
+    }
+    /// Resume a paused job. Only while no other job is running.
+    func resumeQueueJob(_ id: UUID) {
+        guard !queueJobs.contains(where: { $0.isRunning }),
+              let index = queueJobs.firstIndex(where: { $0.id == id }), case .paused(let value) = queueJobs[index].state else { return }
+        queueHoldFlag = false
+        beginQueueSleep()
+        queueJobs[index].state = .running(progress: value)
+        queueRunning[id]?.resume()
+    }
+    /// Start a waiting job now. Only while no other job is running (for example while one is paused); the paused job stays paused.
+    func runQueueJobNow(_ id: UUID) {
+        guard !queueJobs.contains(where: { $0.isRunning }),
+              let index = queueJobs.firstIndex(where: { $0.id == id }), queueJobs[index].state == .queued else { return }
+        moveQueueJobToFront(id)
+        startQueueJob(id)
+    }
+    /// Put a waiting job first among the waiting jobs, so it runs next.
+    func moveQueueJobToFront(_ id: UUID) {
+        guard let index = queueJobs.firstIndex(where: { $0.id == id }), queueJobs[index].state == .queued,
+              let firstWaiting = queueJobs.firstIndex(where: { $0.state == .queued }), firstWaiting < index else { return }
+        let moved = queueJobs.remove(at: index)
+        queueJobs.insert(moved, at: firstWaiting)
+    }
+    private func runQueueJob(_ jobID: UUID, running: RunningJob) async {
         progress = 0
         var workingSources = self[job: jobID].sources
         let mode = self[job: jobID].mode
         let output = self[job: jobID].output
         let planTracks = self[job: jobID].tracks
-        let running = RunningJob()
-        job = running
-        ExportActivity.shared.active = true
-        ExportActivity.shared.cancel = { running.cancel() }
         defer {
-            detachQueueISO()
-            job = nil
+            detachQueueISO(jobID: jobID)
+            queueRunning[jobID] = nil
         }
         do {
-            try await ensureQueueISOMounted(sources: &workingSources)
+            try await ensureQueueISOMounted(jobID: jobID, sources: &workingSources)
         } catch {
             self[job: jobID].state = .failed(error.localizedDescription)
             progress = 0
@@ -349,13 +395,18 @@ import UniformTypeIdentifiers
     }
     private func updateQueueProgress(jobID: UUID, value: Double) {
         guard let index = queueJobs.firstIndex(where: { $0.id == jobID }) else { return }
-        queueJobs[index].state = .running(progress: value)
+        // A late update must not turn a paused job back into a running one.
+        switch queueJobs[index].state {
+        case .running: queueJobs[index].state = .running(progress: value)
+        case .paused: queueJobs[index].state = .paused(progress: value)
+        default: return
+        }
         progress = value
     }
     func cancelQueueJob(_ id: UUID) {
         guard let index = queueJobs.firstIndex(where: { $0.id == id }) else { return }
         switch queueJobs[index].state {
-        case .running: job?.cancel()
+        case .running, .paused: queueRunning[id]?.cancel()
         case .queued: queueJobs[index].state = .cancelled
         default: break
         }
@@ -363,7 +414,7 @@ import UniformTypeIdentifiers
     func removeQueueJob(_ id: UUID) {
         guard let index = queueJobs.firstIndex(where: { $0.id == id }) else { return }
         switch queueJobs[index].state {
-        case .running: job?.cancel()
+        case .running, .paused: queueRunning[id]?.cancel()
         case .queued: queueJobs.remove(at: index)
         case .done, .failed, .cancelled: queueJobs.remove(at: index)
         }
@@ -419,7 +470,7 @@ import UniformTypeIdentifiers
     }
     func reveal() { if let url = completed { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
     func waitForQueueIdle() async {
-        while queueHasPendingExport || queueProcessor != nil {
+        while queueHasPendingExport || activeQueueTasks > 0 {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 50_000_000)
         }

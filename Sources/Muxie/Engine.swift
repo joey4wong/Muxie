@@ -72,7 +72,20 @@ struct ExportPlan: Sendable {
 final class RunningJob: @unchecked Sendable {
     // Internal (not private): RunningJob.runHandBrake lives in Compress.swift and shares this state.
     let lock = NSLock(); var process: Process?; var wasCancelled = false; private var committed = false
-    func cancel() { lock.lock(); defer { lock.unlock() }; guard !committed else { return }; wasCancelled = true; if process?.isRunning == true { process?.terminate() } }
+    /// Pause stops the running tool (SIGSTOP); a tool launched while paused is stopped right after it starts.
+    var isPaused = false
+    func pause() { lock.lock(); defer { lock.unlock() }; isPaused = true; if let p = process, p.isRunning { kill(p.processIdentifier, SIGSTOP) } }
+    func resume() { lock.lock(); defer { lock.unlock() }; isPaused = false; if let p = process, p.isRunning { kill(p.processIdentifier, SIGCONT) } }
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        guard !committed else { return }
+        wasCancelled = true
+        if let p = process, p.isRunning {
+            p.terminate()
+            // A stopped process only sees SIGTERM once it continues.
+            if isPaused { kill(p.processIdentifier, SIGCONT) }
+        }
+    }
     func commit(_ action: () throws -> Void) throws {
         lock.lock(); defer { lock.unlock() }
         if wasCancelled { throw CancellationError() }
@@ -86,7 +99,7 @@ final class RunningJob: @unchecked Sendable {
         // Serialize launch with cancellation so a cancelled job cannot launch later.
         lock.lock()
         if wasCancelled { lock.unlock(); throw CancellationError() }
-        do { try p.run(); process = p; lock.unlock() } catch { lock.unlock(); throw error }
+        do { try p.run(); process = p; if isPaused { kill(p.processIdentifier, SIGSTOP) }; lock.unlock() } catch { lock.unlock(); throw error }
         var all = Data(); var pending = ""
         while true {
             let data = pipe.fileHandleForReading.availableData

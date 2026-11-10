@@ -261,7 +261,7 @@ extension RunningJob {
         p.environment = environment
         lock.lock()
         if wasCancelled { lock.unlock(); throw CancellationError() }
-        do { try p.run(); process = p; lock.unlock() } catch { lock.unlock(); throw error }
+        do { try p.run(); process = p; if isPaused { kill(p.processIdentifier, SIGSTOP) }; lock.unlock() } catch { lock.unlock(); throw error }
         var all = Data()
         var pending = ""
         while true {
