@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds dist/Muxie.app: Muxie + the Sparkle updater framework. mkvmerge is bundled.
-# Env: MKVMERGE_BIN (default: auto-detect installed mkvmerge).
+# mkvmerge comes from the checksum-verified official MKVToolNix release (override with MKVMERGE_BIN).
 # Env: OUT_DIR (default ./dist), SIGN_IDENTITY (default "-" = ad-hoc).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -55,11 +55,26 @@ find "$FW/Versions/B/Resources" -maxdepth 1 -name '*.lproj' ! -name 'en.lproj' !
 
 if [[ "$SIGN_IDENTITY" == "-" ]]; then SIGN=(codesign --force --sign - --timestamp=none)
 else SIGN=(codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime); fi
+MKVTOOLNIX_VERSION=101.0
+MKVTOOLNIX_SHA256=12f7b200d1bc64db16933b55f2c3ce47fdbe4a88878e2e6aa26b702424eac1f0
+MKVTOOLNIX_DMG="$ROOT/.build/MKVToolNix-$MKVTOOLNIX_VERSION-1-arm64.dmg"
 MKVMERGE_SRC="${MKVMERGE_BIN:-}"
-for c in "$MKVMERGE_SRC" /Applications/MKVToolNix*.app/Contents/MacOS/mkvmerge /opt/homebrew/bin/mkvmerge /usr/local/bin/mkvmerge; do
-    if [[ -n "$c" && -x "$c" ]]; then MKVMERGE_SRC="$c"; break; fi
-done
-if [[ -z "$MKVMERGE_SRC" || ! -x "$MKVMERGE_SRC" ]]; then echo "mkvmerge not found. Install MKVToolNix or set MKVMERGE_BIN." >&2; exit 1; fi
+if [[ -z "$MKVMERGE_SRC" ]]; then
+    if [[ ! -f "$MKVTOOLNIX_DMG" ]]; then
+        mkdir -p "$ROOT/.build"
+        curl -fsSL -o "$MKVTOOLNIX_DMG" "https://mkvtoolnix.download/macos/releases/$MKVTOOLNIX_VERSION/MKVToolNix-$MKVTOOLNIX_VERSION-1-arm64.dmg"
+    fi
+    ACTUAL="$(shasum -a 256 "$MKVTOOLNIX_DMG" | awk '{print $1}')"
+    if [[ "$ACTUAL" != "$MKVTOOLNIX_SHA256" ]]; then echo "MKVToolNix checksum mismatch (got $ACTUAL)." >&2; rm -f "$MKVTOOLNIX_DMG"; exit 1; fi
+    MNT="$(mktemp -d)"; MKV_COPY="$ROOT/.build/MKVToolNix-$MKVTOOLNIX_VERSION"
+    rm -rf "$MKV_COPY"; mkdir -p "$MKV_COPY"
+    hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$MKVTOOLNIX_DMG" >/dev/null
+    ditto "$MNT"/MKVToolNix*.app "$MKV_COPY/MKVToolNix.app"
+    hdiutil detach "$MNT" >/dev/null
+    xattr -dr com.apple.quarantine "$MKV_COPY" 2>/dev/null || true
+    MKVMERGE_SRC="$MKV_COPY/MKVToolNix.app/Contents/MacOS/mkvmerge"
+fi
+[[ -x "$MKVMERGE_SRC" ]] || { echo "mkvmerge not found: $MKVMERGE_SRC" >&2; exit 1; }
 BIN="$APP/Contents/Resources/bin"; LIBS="$APP/Contents/Resources/bin/lib"
 mkdir -p "$BIN" "$LIBS"
 cp "$MKVMERGE_SRC" "$BIN/mkvmerge"; chmod u+w "$BIN/mkvmerge"
