@@ -12,6 +12,7 @@ import AppKit
         Window("Muxie", id: "main") {
             ContentView().environmentObject(model)
                 .frame(minWidth: model.sources.isEmpty ? 380 : 520, idealWidth: 760, minHeight: model.minimumContentHeight, idealHeight: 520)
+                .onAppear { delegate.bind(model) }
                 .onOpenURL { url in Task { await model.importFiles([url]) } }
                 .alert("Unable to Complete", isPresented: $model.showError) {
                     Button("Copy Details") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.error ?? "", forType: .string) }
@@ -40,6 +41,12 @@ import AppKit
     }
 }
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private weak var model: AppModel?
+    func bind(_ model: AppModel) { self.model = model }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        BluRayISO.recoverStaleMounts()
+        Task { @MainActor in model?.recoverStaleISOMounts() }
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if ExportActivity.shared.active {
@@ -48,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ExportActivity.shared.cancel?(); ExportActivity.shared.terminating = true
             return .terminateLater
         }
+        BluRayISO.recoverStaleMounts()
         return .terminateNow
     }
 }

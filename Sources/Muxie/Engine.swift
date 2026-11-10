@@ -28,7 +28,8 @@ struct MediaTrack: Identifiable, Equatable, Sendable {
     var filterName: String { kind == "subtitles" ? "Subtitles" : kindName }
 }
 struct MediaSource: Identifiable, Equatable, Sendable {
-    var id: UUID; var url: URL; var container: String; var byteSize: Int64
+    var id: UUID; var url: URL; var originURL: URL? = nil; var container: String; var byteSize: Int64; var featureNote: String? = nil
+    var displayURL: URL { originURL ?? url }
 }
 struct ExportPlan: Sendable {
     var sources: [MediaSource]; var tracks: [MediaTrack]
@@ -111,6 +112,13 @@ enum Engine {
         let target = output.standardizedFileURL.resolvingSymlinksInPath()
         guard !plan.sources.contains(where: { $0.url.standardizedFileURL.resolvingSymlinksInPath() == target }) else { throw MuxError.message("The output cannot be a source file. Choose a different name.") }
         guard !fm.fileExists(atPath: output.path) else { throw MuxError.message("The output already exists. Choose a different name.") }
+        let destination = output.deletingLastPathComponent()
+        let fsAttrs = try fm.attributesOfFileSystem(forPath: destination.path)
+        let freeBytes = (fsAttrs[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
+        let inputBytes = plan.sources.reduce(Int64(0)) { max($0, $1.byteSize) }
+        guard freeBytes > inputBytes else {
+            throw MuxError.message("Not enough free space on the destination disk. Need at least \(BluRayISO.bytesDescription(inputBytes)).")
+        }
         let staging = output.deletingLastPathComponent().appendingPathComponent(".muxie-\(UUID().uuidString).partial.mkv")
         defer { try? fm.removeItem(at: staging) }
         let result = try job.run(engine: engine, arguments: plan.arguments(output: staging), progress: progress)

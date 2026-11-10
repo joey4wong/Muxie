@@ -17,6 +17,7 @@
 				<string>srt</string>
 				<string>ass</string>
 				<string>flac</string>
+				<string>iso</string>
 			</array>
 			<key>CFBundleTypeName</key>
 			<string>Media files</string>
