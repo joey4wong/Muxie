@@ -24,7 +24,7 @@ struct QueueStripView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(job.output.lastPathComponent).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                Text(job.mode.label + " · " + job.statusTitle).font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(job.isRunning || job.isPaused ? job.statusSubtitle : job.mode.label + " · " + job.statusTitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 8)
             if job.isRunning || job.isPaused {
