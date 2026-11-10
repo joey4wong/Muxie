@@ -9,6 +9,8 @@ enum WorkspaceLayout {
     static let filterHeight: CGFloat = 32
     static let listInsets: CGFloat = 36
     static let filterGap: CGFloat = 12
+    /// Top of the inspector card = top of the first track row (list padding + filter bar + gap).
+    static var inspectorTopInset: CGFloat { listInsets / 2 + filterHeight + filterGap }
     static let paginationHeight: CGFloat = 32
     static let exportHeight: CGFloat = 138
     static let activityHeight: CGFloat = 72

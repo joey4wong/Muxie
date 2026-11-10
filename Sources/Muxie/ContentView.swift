@@ -9,12 +9,13 @@ private let accent = Color("AccentColor")
 /// Native Liquid Glass button (system `.glass` style, capsule shape). `compact: false` is the large variant.
 struct NeutralGlassButtonStyle: ButtonStyle {
     var compact = true
+    var padded = true
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         // Own glass capsule instead of `.glass`: the system style picks up the app accent as a coloured fill.
         configuration.label.foregroundStyle(.primary)
-            .padding(.horizontal, compact ? 14 : 26)
-            .padding(.vertical, compact ? 6 : 10)
+            .padding(.horizontal, padded ? (compact ? 14 : 26) : 0)
+            .padding(.vertical, padded ? (compact ? 6 : 10) : 0)
             .glassEffect(.regular.interactive(), in: Capsule())
             .opacity(enabled ? (configuration.isPressed ? 0.75 : 1) : 0.45)
     }
@@ -46,30 +47,16 @@ struct ContentView: View {
                         if model.active != nil && !compactInspector {
                             inspector.frame(width: 238)
                                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
-                                .padding(.trailing, 14).padding(.top, 19).padding(.bottom, 8)
+                                .padding(.trailing, 14).padding(.top, WorkspaceLayout.inspectorTopInset).padding(.bottom, WorkspaceLayout.listInsets / 2)
                         }
                     }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
                     VStack(spacing: 8) {
-                        GlassEffectContainer(spacing: 8) {
-                            HStack(spacing: 8) {
-                                ForEach(model.compressEligible ? ExportMode.allCases : [.mux]) { mode in
-                                    let selected = model.exportMode == mode
-                                    Button { model.exportMode = mode } label: {
-                                        Text(mode.label)
-                                            .font(.system(size: 13, weight: selected ? .semibold : .regular))
-                                            .foregroundStyle(.primary)
-                                            .padding(.horizontal, 18).padding(.vertical, 6)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .glassEffect(selected ? .regular.tint(accent.opacity(0.35)).interactive() : .regular.interactive(), in: Capsule())
-                                }
-                            }
+                        modeSwitch.disabled(model.importing)
+                        Button { model.exportPanel() } label: {
+                            Text("Export").font(.system(size: 16, weight: .semibold))
+                                .frame(width: 150, height: 42)
                         }
-                        .disabled(model.importing)
-                        Button("Export") { model.exportPanel() }
-                            .font(.system(size: 15, weight: .semibold))
-                            .padding(.horizontal, 40).padding(.vertical, 9)
-                            .buttonStyle(NeutralGlassButtonStyle(compact: false))
+                            .buttonStyle(NeutralGlassButtonStyle(compact: false, padded: false))
                             .disabled(!model.canExport)
                     }
                     .frame(height: WorkspaceLayout.exportHeight)
@@ -127,6 +114,34 @@ struct ContentView: View {
                 await model.importFiles(urls)
             }
             return true
+        }
+    }
+    /// One glass capsule holding both modes; a glass indicator slides between them.
+    private var modeSwitch: some View {
+        let modes = model.compressEligible ? ExportMode.allCases : [.mux]
+        let index = CGFloat(modes.firstIndex(of: model.exportMode) ?? 0)
+        let segmentWidth: CGFloat = 104, segmentHeight: CGFloat = 32, inset: CGFloat = 4
+        return GlassEffectContainer(spacing: 0) {
+            ZStack(alignment: .leading) {
+                Capsule().fill(.clear)
+                    .frame(width: segmentWidth * CGFloat(modes.count) + inset * 2, height: segmentHeight + inset * 2)
+                    .glassEffect(.regular, in: Capsule())
+                Capsule().fill(.clear)
+                    .frame(width: segmentWidth, height: segmentHeight)
+                    .glassEffect(.regular.tint(accent.opacity(0.35)).interactive(), in: Capsule())
+                    .offset(x: inset + index * segmentWidth)
+                HStack(spacing: 0) {
+                    ForEach(modes) { mode in
+                        Button { withAnimation(.spring(duration: 0.4, bounce: 0.28)) { model.exportMode = mode } } label: {
+                            Text(mode.label)
+                                .font(.system(size: 13, weight: model.exportMode == mode ? .semibold : .regular))
+                                .foregroundStyle(.primary)
+                                .frame(width: segmentWidth, height: segmentHeight)
+                                .contentShape(Capsule())
+                        }.buttonStyle(.plain)
+                    }
+                }.padding(.leading, inset)
+            }
         }
     }
     private var emptyState: some View {
