@@ -30,6 +30,9 @@ import AppKit
                 Button("Check for Updates…") { updater.checkForUpdates() }
                     .disabled(!updater.canCheck || model.busy || model.queueHasPendingExport)
             }
+            CommandGroup(after: .help) {
+                Button("Contact Developer") { NSWorkspace.shared.open(URL(string: "https://github.com/joey4wong/Muxie")!) }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Project") { model.reset() }.keyboardShortcut("n").disabled(model.importing || model.sources.isEmpty)
                 Button("Open Video…") { model.openFiles() }.keyboardShortcut("o").disabled(model.importing || !model.sources.isEmpty)

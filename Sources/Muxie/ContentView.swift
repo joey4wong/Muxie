@@ -46,26 +46,29 @@ struct ContentView: View {
                         if model.active != nil && !compactInspector {
                             inspector.frame(width: 238)
                                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
-                                .padding(.trailing, 14).padding(.top, 14).padding(.bottom, 8)
+                                .padding(.trailing, 14).padding(.top, 19).padding(.bottom, 8)
                         }
                     }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
                     VStack(spacing: 8) {
-                        Picker("Export", selection: $model.exportMode) {
-                            ForEach(model.compressEligible ? ExportMode.allCases : [.mux]) { mode in
-                                Text(mode.label).tag(mode)
+                        GlassEffectContainer(spacing: 8) {
+                            HStack(spacing: 8) {
+                                ForEach(model.compressEligible ? ExportMode.allCases : [.mux]) { mode in
+                                    let selected = model.exportMode == mode
+                                    Button { model.exportMode = mode } label: {
+                                        Text(mode.label)
+                                            .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                                            .foregroundStyle(.primary)
+                                            .padding(.horizontal, 18).padding(.vertical, 6)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .glassEffect(selected ? .regular.tint(accent.opacity(0.35)).interactive() : .regular.interactive(), in: Capsule())
+                                }
                             }
                         }
-                        .pickerStyle(.segmented).labelsHidden()
-                        .frame(maxWidth: 240)
                         .disabled(model.importing)
-                        if model.exportMode == .compress && model.compressEligible {
-                            Text("Audio converts to AAC.")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                        }
                         Button("Export") { model.exportPanel() }
-                            .font(.system(size: 13, weight: .semibold))
-                            .padding(.horizontal, 32).padding(.vertical, 7)
+                            .font(.system(size: 15, weight: .semibold))
+                            .padding(.horizontal, 40).padding(.vertical, 9)
                             .buttonStyle(NeutralGlassButtonStyle(compact: false))
                             .disabled(!model.canExport)
                     }
