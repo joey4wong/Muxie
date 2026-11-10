@@ -59,7 +59,7 @@ struct ExportPlan: Sendable {
         guard track.kind == "audio" else { return false }
         let channels = track.audioChannels ?? 2
         let aac = track.isAAC ?? track.codec.uppercased().contains("AAC")
-        return !CompressSettings.audioIsCopied(channels: channels, isAAC: aac)
+        return !Engine.audioIsCopied(channels: channels, isAAC: aac)
     }
 
     /// Remux input for HandBrake: checked video and audio that must be re-encoded; no subtitles.
