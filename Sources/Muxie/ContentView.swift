@@ -24,10 +24,8 @@ private struct GlassBackdrop: View {
     var body: some View {
         ZStack {
             Color(nsColor: .windowBackgroundColor)
-            // Deep green light, kept dark and low-saturation so the window never goes pure black.
-            RadialGradient(colors: [Color(red: 0.07, green: 0.34, blue: 0.25).opacity(0.55), .clear], center: UnitPoint(x: 0.5, y: 0.45), startRadius: 0, endRadius: 520)
-            RadialGradient(colors: [Color(red: 0.05, green: 0.26, blue: 0.20).opacity(0.40), .clear], center: .bottomTrailing, startRadius: 0, endRadius: 520)
-            RadialGradient(colors: [Color(red: 0.06, green: 0.28, blue: 0.22).opacity(0.35), .clear], center: .topLeading, startRadius: 0, endRadius: 480)
+            RadialGradient(colors: [accent.opacity(0.30), .clear], center: .topLeading, startRadius: 0, endRadius: 520)
+            RadialGradient(colors: [accent.opacity(0.20), .clear], center: .bottomTrailing, startRadius: 0, endRadius: 480)
         }.ignoresSafeArea()
     }
 }
