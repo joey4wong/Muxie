@@ -75,17 +75,17 @@ import UniformTypeIdentifiers
             do {
                 let importURL: URL
                 let originURL: URL?
-                let featureNote: String?
+                let sourceBytes: Int64
                 if url.pathExtension.lowercased() == "iso" {
                     let mount = try await Task.detached(priority: .userInitiated) { try BluRayISO.attach(iso: canonical) }.value
                     openedMount = mount
-                    importURL = mount.m2tsURL
+                    importURL = mount.mediaURL
                     originURL = canonical
-                    featureNote = "Main feature: \(mount.m2tsName) (\(BluRayISO.bytesDescription(mount.m2tsBytes)))"
+                    sourceBytes = mount.inputBytes
                 } else {
                     importURL = canonical
                     originURL = nil
-                    featureNote = nil
+                    sourceBytes = Int64((try? importURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
                 }
                 let probe = try await Task.detached(priority: .userInitiated) { try Engine.identify(importURL, engine: engine) }.value
                 let supported = probe.tracks.filter { ["video", "audio", "subtitles"].contains($0.type) }
@@ -93,13 +93,7 @@ import UniformTypeIdentifiers
                 let isPrimary = sources.isEmpty
                 if isPrimary && !supported.contains(where: { $0.type == "video" }) { throw MuxError.message("Open a video before adding audio or subtitles.") }
                 let sourceID = UUID()
-                let bytes: Int64
-                if let openedMount {
-                    bytes = openedMount.m2tsBytes
-                } else {
-                    bytes = Int64((try? importURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-                }
-                sources.append(MediaSource(id: sourceID, url: importURL, originURL: originURL, container: probe.container.type ?? importURL.pathExtension.uppercased(), byteSize: bytes, featureNote: featureNote))
+                sources.append(MediaSource(id: sourceID, url: importURL, originURL: originURL, container: probe.container.type ?? importURL.pathExtension.uppercased(), byteSize: sourceBytes))
                 if let m = openedMount { isoMounts[sourceID] = m; openedMount = nil }
                 var added: [MediaTrack] = []
                 for t in supported {
@@ -155,9 +149,8 @@ import UniformTypeIdentifiers
             guard let iso = sources[index].originURL, isoMounts[sources[index].id] == nil else { continue }
             let mount = try await Task.detached(priority: .userInitiated) { try BluRayISO.attach(iso: iso) }.value
             isoMounts[sources[index].id] = mount
-            sources[index].url = mount.m2tsURL
-            sources[index].byteSize = mount.m2tsBytes
-            sources[index].featureNote = "Main feature: \(mount.m2tsName) (\(BluRayISO.bytesDescription(mount.m2tsBytes)))"
+            sources[index].url = mount.mediaURL
+            sources[index].byteSize = mount.inputBytes
         }
     }
     func exportPanel() {

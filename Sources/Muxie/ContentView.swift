@@ -56,7 +56,7 @@ struct ContentView: View {
                         .disabled(!model.canExport)
                         .frame(height: WorkspaceLayout.exportHeight)
                     Group {
-                        if model.exporting || model.importing || model.completed != nil || model.sources.first?.featureNote != nil { activityBar }
+                        if model.exporting || model.importing || model.completed != nil { activityBar }
                         else { Color.clear }
                     }.frame(height: WorkspaceLayout.activityHeight)
                 }
@@ -208,11 +208,7 @@ struct ContentView: View {
     }
     private var activityBar: some View {
         HStack(spacing: 12) {
-            if let note = model.sources.first?.featureNote, !model.importing, !model.exporting, model.completed == nil {
-                Image(systemName: "opticaldisc").foregroundStyle(.secondary)
-                Text(note).font(.system(size: 11)).lineLimit(1)
-                Spacer()
-            } else if model.importing {
+            if model.importing {
                 ProgressView().controlSize(.small)
                 Text("Importing…").font(.system(size: 11))
                 Spacer()

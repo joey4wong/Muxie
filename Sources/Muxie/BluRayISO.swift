@@ -7,9 +7,8 @@ struct BluRayMount: Sendable, Equatable {
     var isoURL: URL
     var mountPoint: URL
     var device: String
-    var m2tsURL: URL
-    var m2tsName: String
-    var m2tsBytes: Int64
+    var mediaURL: URL
+    var inputBytes: Int64
 }
 
 enum BluRayISO {
@@ -21,6 +20,18 @@ enum BluRayISO {
         saveRecords([])
     }
 
+    /// Picks the largest `.mpls` file in `BDMV/PLAYLIST` (main-feature heuristic). Exposed for unit tests.
+    static func longestPlaylist(under mount: URL) throws -> URL? {
+        let playlist = mount.appendingPathComponent("BDMV/PLAYLIST", isDirectory: true)
+        guard fm.fileExists(atPath: playlist.path) else { return nil }
+        let entries = try fm.contentsOfDirectory(at: playlist, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles])
+        return entries.compactMap { url -> (URL, Int64)? in
+            guard url.pathExtension.lowercased() == "mpls" else { return nil }
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            return (url, size)
+        }.max(by: { $0.1 < $1.1 })?.0
+    }
+
     static func attach(iso: URL) throws -> BluRayMount {
         let data = try runHdiutil(["attach", "-readonly", "-nobrowse", "-noverify", "-plist", iso.path])
         let attached = try parseAttachOutput(data, isoName: iso.lastPathComponent)
@@ -28,9 +39,6 @@ enum BluRayISO {
         let mountPoint = attached.mountPoint
         let layout = try classifyVolume(at: mountPoint)
         switch layout {
-        case .encrypted:
-            detachDevice(device)
-            throw MuxError.message("This disc is encrypted. Muxie does not handle encrypted Blu-ray images.")
         case .dvd:
             detachDevice(device)
             throw MuxError.message("DVD ISO images are not supported yet.")
@@ -40,13 +48,17 @@ enum BluRayISO {
         case .bluRay:
             break
         }
-        let featureFile: (url: URL, bytes: Int64)?
-        do { featureFile = try largestM2TS(under: mountPoint) } catch { detachDevice(device); throw error }
-        guard let feature = featureFile else {
+        let isoBytes = (try? iso.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        let mediaURL: URL
+        if let mpls = try longestPlaylist(under: mountPoint) {
+            mediaURL = mpls
+        } else if let feature = try largestM2TS(under: mountPoint) {
+            mediaURL = feature.url
+        } else {
             detachDevice(device)
-            throw MuxError.message("No .m2ts files were found on this disc image.")
+            throw MuxError.message("No Blu-ray playlist or feature file was found on this disc image.")
         }
-        let mount = BluRayMount(isoURL: iso, mountPoint: mountPoint, device: device, m2tsURL: feature.url, m2tsName: feature.url.lastPathComponent, m2tsBytes: feature.bytes)
+        let mount = BluRayMount(isoURL: iso, mountPoint: mountPoint, device: device, mediaURL: mediaURL, inputBytes: isoBytes)
         remember(mount)
         return mount
     }
@@ -60,7 +72,6 @@ enum BluRayISO {
         else if let list = root as? [[String: Any]] { entities = list }
         else { throw MuxError.message("Could not mount \(isoName).") }
         let devices = entities.compactMap { ($0["dev-entry"] as? String) ?? ($0["device"] as? String) }
-        // Detach via the whole-disk node (shortest path, e.g. /dev/disk4 rather than /dev/disk4s1) so every slice goes away.
         let wholeDisk = devices.min(by: { $0.count < $1.count })
         let mountPath = entities.compactMap { $0["mount-point"] as? String }.first
         guard let wholeDisk, let mountPath else {
@@ -75,12 +86,11 @@ enum BluRayISO {
         forget(device: mount.device)
     }
 
-    private enum VolumeKind { case bluRay, dvd, encrypted, unknown }
+    private enum VolumeKind { case bluRay, dvd, unknown }
 
     private static func classifyVolume(at mount: URL) throws -> VolumeKind {
         let bdmv = mount.appendingPathComponent("BDMV")
         let stream = bdmv.appendingPathComponent("STREAM")
-        if fm.fileExists(atPath: mount.appendingPathComponent("AACS").path) || fm.fileExists(atPath: bdmv.appendingPathComponent("AACS").path) { return .encrypted }
         if fm.fileExists(atPath: stream.path) { return .bluRay }
         if fm.fileExists(atPath: mount.appendingPathComponent("VIDEO_TS").path) { return .dvd }
         return .unknown

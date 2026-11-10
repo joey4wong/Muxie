@@ -28,7 +28,7 @@ struct MediaTrack: Identifiable, Equatable, Sendable {
     var filterName: String { kind == "subtitles" ? "Subtitles" : kindName }
 }
 struct MediaSource: Identifiable, Equatable, Sendable {
-    var id: UUID; var url: URL; var originURL: URL? = nil; var container: String; var byteSize: Int64; var featureNote: String? = nil
+    var id: UUID; var url: URL; var originURL: URL? = nil; var container: String; var byteSize: Int64
     var displayURL: URL { originURL ?? url }
 }
 struct ExportPlan: Sendable {

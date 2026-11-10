@@ -111,6 +111,15 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         for track in noVideo { model.boolBinding(track.id, \.enabled).wrappedValue = false }
         try check(!model.canExport, "Export disabled when all video tracks excluded")
         try check((try Data(contentsOf: video)) == original, "Input bytes unchanged after all tests")
+        let bdmvRoot = fixture.appendingPathComponent("bdmv-title-fixture")
+        let playlistDir = bdmvRoot.appendingPathComponent("BDMV/PLAYLIST", isDirectory: true)
+        let streamDir = bdmvRoot.appendingPathComponent("BDMV/STREAM", isDirectory: true)
+        try fm.createDirectory(at: playlistDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: streamDir, withIntermediateDirectories: true)
+        try Data(repeating: 0, count: 120).write(to: playlistDir.appendingPathComponent("00000.mpls"))
+        try Data(repeating: 0, count: 8400).write(to: playlistDir.appendingPathComponent("00800.mpls"))
+        let mainTitle = try BluRayISO.longestPlaylist(under: bdmvRoot)
+        try check(mainTitle?.lastPathComponent == "00800.mpls", "Blu-ray main title picks the largest PLAYLIST mpls (mount/remux path: owner manual)")
         print("\n\(results.count) checks passed. Outputs: \(run.path)")
         try (results.joined(separator: "\n") + "\n\nOutputs: " + run.path + "\n").write(to: fixture.appendingPathComponent("test-report.txt"), atomically: true, encoding: .utf8)
     }
