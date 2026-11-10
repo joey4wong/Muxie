@@ -157,8 +157,11 @@ extension Engine {
         guard !fm.fileExists(atPath: output.path) else { throw MuxError.message("The output already exists. Choose a different name.") }
         let destination = output.deletingLastPathComponent()
         try ExportSpace.verifySpace(mode: .compress, plan: plan, destination: destination)
-        let remuxStaging = destination.appendingPathComponent(".muxie-remux-\(UUID().uuidString).partial.mkv")
-        let encodeStaging = destination.appendingPathComponent(".muxie-compress-\(UUID().uuidString).partial.mkv")
+        // Visible (no leading dot) so the temporary files can be seen in Finder next to the output while the job runs.
+        let tag = String(UUID().uuidString.prefix(6))
+        let base = output.deletingPathExtension().lastPathComponent
+        let remuxStaging = destination.appendingPathComponent("Muxie temp - \(base) (remux \(tag)).partial.mkv")
+        let encodeStaging = destination.appendingPathComponent("Muxie temp - \(base) (encode \(tag)).partial.mkv")
         TempFileRegistry.register(remuxStaging)
         TempFileRegistry.register(encodeStaging)
         defer {

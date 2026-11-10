@@ -23,7 +23,7 @@ enum TempFileRegistry {
     static var registryURL: URL { supportDirectory.appendingPathComponent(fileName) }
 
     static func isManagedPartialFileName(_ name: String) -> Bool {
-        name.hasPrefix(".muxie-") && name.hasSuffix(".partial.mkv")
+        (name.hasPrefix(".muxie-") || name.hasPrefix("Muxie temp - ")) && name.hasSuffix(".partial.mkv")
     }
 
     static func register(_ url: URL) {

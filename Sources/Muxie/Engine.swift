@@ -138,7 +138,7 @@ enum Engine {
         guard !fm.fileExists(atPath: output.path) else { throw MuxError.message("The output already exists. Choose a different name.") }
         let destination = output.deletingLastPathComponent()
         try ExportSpace.verifySpace(mode: .mux, plan: plan, destination: destination)
-        let staging = output.deletingLastPathComponent().appendingPathComponent(".muxie-\(UUID().uuidString).partial.mkv")
+        let staging = output.deletingLastPathComponent().appendingPathComponent("Muxie temp - \(output.deletingPathExtension().lastPathComponent) (\(UUID().uuidString.prefix(6))).partial.mkv")
         TempFileRegistry.register(staging)
         defer {
             TempFileRegistry.unregister(staging)
