@@ -85,9 +85,9 @@ bundle_deps() {
         base="$(basename "$dep")"
         if [[ ! -f "$LIBS/$base" ]]; then
             local real="$dep"
-            [[ "$dep" == @rpath/* || "$dep" == @loader_path/* || "$dep" == @executable_path/* ]] && real="$(find "$(dirname "$MKVMERGE_SRC")/.." "$(dirname "$MKVMERGE_SRC")" /opt/homebrew/lib /usr/local/lib /opt/homebrew/opt -name "$base" -type f 2>/dev/null | head -1)"
+            [[ "$dep" == @rpath/* || "$dep" == @loader_path/* || "$dep" == @executable_path/* ]] && real="$(find "$(dirname "$MKVMERGE_SRC")/libs" "$(dirname "$MKVMERGE_SRC")/.." "$(dirname "$MKVMERGE_SRC")" /opt/homebrew/lib /usr/local/lib /opt/homebrew/opt -name "$base" \( -type f -o -type l \) 2>/dev/null | head -1 || true)"
             [[ -f "$real" ]] || { echo "Cannot locate dependency $dep" >&2; exit 1; }
-            cp "$real" "$LIBS/$base"; chmod u+w "$LIBS/$base"
+            cp -L "$real" "$LIBS/$base"; chmod u+w "$LIBS/$base"
             install_name_tool -id "@loader_path/lib/$base" "$LIBS/$base" 2>/dev/null || true
             bundle_deps "$LIBS/$base"
         fi

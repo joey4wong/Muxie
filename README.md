@@ -6,7 +6,7 @@ Source: https://github.com/joey4wong/Muxie
 
 ## Requirements
 
-[MKVToolNix](https://mkvtoolnix.download/) must be installed separately. Muxie runs its `mkvmerge` and looks in `/Applications`, `~/Applications` and Homebrew. Nothing from MKVToolNix is bundled.
+Nothing else needs to be installed: Muxie.app contains its own copy of `mkvmerge` from [MKVToolNix](https://mkvtoolnix.download/) in `Contents/Resources/bin`. If that copy is missing, Muxie falls back to an installed MKVToolNix in `/Applications`, `~/Applications` or Homebrew.
 
 ## Use
 
@@ -21,7 +21,7 @@ Unnamed tracks are labeled Video / Audio / Subtitle (numbered per type when ther
 
 ## Updates
 
-**Muxie > Check for Updates…** looks for a newer version on GitHub Releases. Checks are manual only: there are no background checks and no prompts. The item is disabled while an import or export is running. Updates are signed with an EdDSA key and verified before they are unpacked; Muxie then replaces itself and relaunches. Update archives contain Muxie only. See `RELEASING.md` to publish one.
+**Muxie > Check for Updates…** looks for a newer version on GitHub Releases. Checks are manual only: there are no background checks and no prompts. The item is disabled while an import or export is running. Updates are signed with an EdDSA key and verified before they are unpacked; Muxie then replaces itself and relaunches. Update archives contain the bundled `mkvmerge`. See `RELEASING.md` to publish one.
 
 ## Build and test
 
@@ -33,8 +33,8 @@ Xcode with the macOS 26 SDK is required.
 ./test.sh           # integration tests (ffmpeg is needed only to generate fixtures)
 ```
 
-`build.sh` downloads Sparkle at a pinned version and refuses it unless its SHA-256 matches. Builds are ad-hoc signed unless `SIGN_IDENTITY` is set, and are not notarized. `TESTING.md` records what has been verified and what has not.
+`build.sh` downloads Sparkle and MKVToolNix at pinned versions and refuses them unless their SHA-256 matches. Builds are ad-hoc signed unless `SIGN_IDENTITY` is set, and are not notarized. `TESTING.md` records what has been verified and what has not.
 
 ## License and third-party software
 
-Muxie's own source is licensed under **GPL-2.0-only** (see `LICENSE`). It embeds Sparkle (MIT) and runs MKVToolNix, which is GPL-2.0-only and not redistributed. Muxie is not an official MKVToolNix product; MKVToolNix is by Moritz Bunkus and contributors. Details are in `THIRD-PARTY-NOTICES.md`.
+Muxie's own source is licensed under **GPL-2.0-only** (see `LICENSE`). It embeds Sparkle (MIT) and bundles the `mkvmerge` executable from MKVToolNix, which is GPL-2.0-only and run as a separate process; its corresponding source is linked in `THIRD-PARTY-NOTICES.md`. Muxie is not an official MKVToolNix product; MKVToolNix is by Moritz Bunkus and contributors. Details are in `THIRD-PARTY-NOTICES.md`.
