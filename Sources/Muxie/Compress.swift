@@ -147,7 +147,9 @@ extension Engine {
             throw MuxError.message("Compressed output exceeds 1080p.")
         }
         let audioTracks = probe.tracks.filter { $0.type == "audio" }
-        guard !audioTracks.isEmpty, audioTracks.allSatisfy({ $0.codec.uppercased().contains("AAC") }) else {
+        // A project may have every audio track unchecked; then a video-only output is correct.
+        let wantedAudio = plan.orderedTracks.filter { $0.kind == "audio" }.count
+        guard (wantedAudio == 0 || !audioTracks.isEmpty), audioTracks.allSatisfy({ $0.codec.uppercased().contains("AAC") }) else {
             throw MuxError.message("Compressed output audio codec verification failed.")
         }
         let wantedSubs = plan.orderedTracks.filter { $0.kind == "subtitles" }.count

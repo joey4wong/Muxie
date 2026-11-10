@@ -131,6 +131,8 @@ if lipo -archs "$HANDBRAKE_SRC" | grep -q x86_64; then lipo "$HANDBRAKE_SRC" -th
 else cp "$HANDBRAKE_SRC" "$BIN/HandBrakeCLI"; fi
 chmod u+w "$BIN/HandBrakeCLI"
 bundle_deps "$BIN/HandBrakeCLI" "$(dirname "$HANDBRAKE_SRC")"
+# Libraries added for HandBrakeCLI must be signed again (install_name_tool invalidated them) before the executable is.
+for f in "$LIBS"/*.dylib; do [[ -e "$f" ]] && "${SIGN[@]}" "$f"; done
 "${SIGN[@]}" "$BIN/HandBrakeCLI"
 "$BIN/HandBrakeCLI" --version | head -1
 

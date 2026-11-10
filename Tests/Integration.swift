@@ -135,6 +135,15 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         for track in again.tracks where track.kind == "video" { again.boolBinding(track.id, \.enabled).wrappedValue = true }
         await again.refreshCompressEligibility()
         try check(!again.compressEligible, "Compress is not offered for HEVC 10-bit video at or below 1080p")
+        // Every audio track unchecked: a video-only compressed output is valid, not a verification failure.
+        let silentCompress = AppModel()
+        await silentCompress.importFiles([video])
+        for track in silentCompress.tracks where track.kind == "video" { silentCompress.boolBinding(track.id, \.enabled).wrappedValue = true }
+        silentCompress.exportMode = .compress
+        let silentCompressURL = run.appendingPathComponent("H.265 compress no audio.mkv")
+        await silentCompress.export(to: silentCompressURL)
+        if !fm.fileExists(atPath: silentCompressURL.path) { throw MuxError.message("Compress without audio failed: " + (silentCompress.error ?? "no error reported")) }
+        try check(try Engine.identify(silentCompressURL, engine: engine).tracks.filter { $0.type == "audio" }.isEmpty, "Compress accepts a project with no audio tracks")
         let compressCancelURL = run.appendingPathComponent("compress-cancelled.mkv")
         let compressJob = RunningJob()
         let compressWitness = ProgressWitness()
