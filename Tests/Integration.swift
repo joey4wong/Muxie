@@ -183,7 +183,9 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         )
         try check(CompressSettings.encodedChannelCount(sourceChannels: 8) == 6, "7.1 and above cap at 5.1 for AAC")
         let spaceSource = MediaSource(id: UUID(), url: video, container: "MP4", byteSize: 10_000_000)
-        let spacePlan = ExportPlan(sources: [spaceSource], tracks: model.tracks.filter(\.enabled))
+        // The track must belong to this source and be checked; `model`'s tracks belong to another source and are unchecked here.
+        let spaceTrack = MediaTrack(sourceID: spaceSource.id, trackID: 0, kind: "video", codec: "AVC", name: "", language: "und", isDefault: false, isForced: false, enabled: true, detail: "")
+        let spacePlan = ExportPlan(sources: [spaceSource], tracks: [spaceTrack])
         try check(ExportSpace.requiredBytes(mode: .mux, plan: spacePlan) == 10_000_000, "Mux space estimate equals checked input bytes")
         try check(ExportSpace.requiredBytes(mode: .compress, plan: spacePlan) == 10_000_000 + 5_000_000, "Compress space estimate includes temp remux and conservative output")
         let spaceMsg = ExportSpace.spaceErrorMessage(required: 40_000_000_000, available: 21_000_000_000)
