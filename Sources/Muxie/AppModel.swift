@@ -239,6 +239,8 @@ import UniformTypeIdentifiers
             while let index = queueJobs.firstIndex(where: { $0.state == .queued }) {
                 await runQueueJob(at: index)
             }
+            let failedCount = queueJobs.filter { if case .failed = $0.state { return true }; return false }.count
+            if failedCount > 0 { fail(failedCount == 1 ? "1 queued export failed. Open the export queue for details." : "\(failedCount) queued exports failed. Open the export queue for details.") }
             if queueSleeping {
                 IdleSleepActivity.end()
                 queueSleeping = false
@@ -249,16 +251,17 @@ import UniformTypeIdentifiers
         }
     }
     private func runQueueJob(at index: Int) async {
+        let jobID = queueJobs[index].id
         if !queueSleeping {
             IdleSleepActivity.begin()
             queueSleeping = true
         }
-        queueJobs[index].state = .running(progress: 0)
+        self[job: jobID].state = .running(progress: 0)
         progress = 0
-        var workingSources = queueJobs[index].sources
-        let mode = queueJobs[index].mode
-        let output = queueJobs[index].output
-        let planTracks = queueJobs[index].tracks
+        var workingSources = self[job: jobID].sources
+        let mode = self[job: jobID].mode
+        let output = self[job: jobID].output
+        let planTracks = self[job: jobID].tracks
         let running = RunningJob()
         job = running
         ExportActivity.shared.active = true
@@ -270,31 +273,30 @@ import UniformTypeIdentifiers
         do {
             try await ensureQueueISOMounted(sources: &workingSources)
         } catch {
-            queueJobs[index].state = .failed(error.localizedDescription)
+            self[job: jobID].state = .failed(error.localizedDescription)
             progress = 0
             return
         }
         let plan = ExportPlan(sources: workingSources, tracks: planTracks)
         guard let engine = Engine.executable else {
-            queueJobs[index].state = .failed("The bundled mkvmerge is missing. Reinstall Muxie.")
+            self[job: jobID].state = .failed("The bundled mkvmerge is missing. Reinstall Muxie.")
             return
         }
         if mode == .compress, Engine.handbrakeExecutable == nil {
-            queueJobs[index].state = .failed("The bundled HandBrakeCLI is missing. Reinstall Muxie.")
+            self[job: jobID].state = .failed("The bundled HandBrakeCLI is missing. Reinstall Muxie.")
             return
         }
         do {
             try ExportSpace.verifySpace(mode: mode, plan: plan, destination: output.deletingLastPathComponent())
         } catch let err as MuxError {
-            queueJobs[index].state = .failed(err.localizedDescription)
+            self[job: jobID].state = .failed(err.localizedDescription)
             return
         } catch {
-            queueJobs[index].state = .failed(error.localizedDescription)
+            self[job: jobID].state = .failed(error.localizedDescription)
             return
         }
         do {
             let handbrake = Engine.handbrakeExecutable
-            let jobID = queueJobs[index].id
             let warnings = try await Task.detached(priority: .userInitiated) { [running] in
                 if mode == .compress, let handbrake {
                     return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running) { value in
@@ -305,16 +307,21 @@ import UniformTypeIdentifiers
                     Task { @MainActor in self.updateQueueProgress(jobID: jobID, value: value) }
                 }
             }.value
-            queueJobs[index].warning = warnings
-            queueJobs[index].state = .done
+            self[job: jobID].warning = warnings
+            self[job: jobID].state = .done
             progress = 1
         } catch is CancellationError {
-            queueJobs[index].state = .cancelled
+            self[job: jobID].state = .cancelled
             progress = 0
         } catch {
-            queueJobs[index].state = .failed(error.localizedDescription)
+            self[job: jobID].state = .failed(error.localizedDescription)
             progress = 0
         }
+    }
+    /// Job lookup by id. Writes to a job that no longer exists are ignored.
+    private subscript(job id: UUID) -> QueueJob {
+        get { queueJobs.first { $0.id == id } ?? QueueJob(id: id, sources: [], tracks: [], mode: .mux, output: URL(fileURLWithPath: "/"), state: .cancelled, warning: nil) }
+        set { if let i = queueJobs.firstIndex(where: { $0.id == id }) { queueJobs[i] = newValue } }
     }
     private func updateQueueProgress(jobID: UUID, value: Double) {
         guard let index = queueJobs.firstIndex(where: { $0.id == jobID }) else { return }

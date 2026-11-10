@@ -20,8 +20,10 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let sourceFolder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/Muxie")
         let runtimeFiles = try fm.contentsOfDirectory(at: sourceFolder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
         let runtimeText = try runtimeFiles.map { try String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
+        // The track list must never scroll. The export queue popover (QueuePanel.swift) is a separate list and may.
+        let trackScreenText = try runtimeFiles.filter { $0.lastPathComponent != "QueuePanel.swift" }.map { try String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
         try check(!runtimeText.unicodeScalars.contains(where: { (0x3400...0x9fff).contains($0.value) }) && !runtimeText.contains("chooseEngine") && !runtimeText.contains("enginePath") && !runtimeText.contains("sidebar"), "English-only runtime source, no sidebar or engine chooser")
-        try check(!runtimeText.contains("ScrollView") && !runtimeText.contains("glassProminent") && !runtimeText.contains("height * 0.70"), "No track scrolling, fractional clipping or saturated prominent buttons")
+        try check(!trackScreenText.contains("ScrollView") && !runtimeText.contains("glassProminent") && !runtimeText.contains("height * 0.70"), "No track scrolling, fractional clipping or saturated prominent buttons")
         let layoutSizes = (1...6).map { WorkspaceLayout.minimumContentHeight(rows: $0) }
         try check(zip(layoutSizes, layoutSizes.dropFirst()).allSatisfy { $1 - $0 == WorkspaceLayout.rowHeight + WorkspaceLayout.rowSpacing }, "Minimum height increases by exactly one complete row per track")
         let projectFolder = sourceFolder.deletingLastPathComponent().deletingLastPathComponent()

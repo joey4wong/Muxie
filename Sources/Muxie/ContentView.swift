@@ -82,9 +82,10 @@ struct ContentView: View {
         .navigationTitle(model.sources.first?.displayURL.lastPathComponent ?? "Muxie")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                // Stays enabled while any job (also a finished or failed one) is listed, so its result stays reachable.
                 Button { model.showQueue = true } label: {
-                    Label("\(model.queueBadgeCount)", systemImage: "tray.full")
-                }.help("Export queue").disabled(model.queueBadgeCount == 0)
+                    if model.queueBadgeCount > 0 { Label("\(model.queueBadgeCount)", systemImage: "tray.full") } else { Image(systemName: "tray.full") }
+                }.help("Export queue").disabled(model.queueJobs.isEmpty)
                 if !model.sources.isEmpty {
                     Button { model.reset() } label: { Image(systemName: "doc.badge.plus") }.help("New Project").disabled(model.importing)
                     Button { model.openFiles(additional: true) } label: { Label("Add Tracks", systemImage: "plus") }.disabled(model.importing)
