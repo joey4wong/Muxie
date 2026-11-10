@@ -130,18 +130,21 @@ struct ContentView: View {
                     .frame(width: segmentWidth, height: segmentHeight)
                     .glassEffect(.clear.interactive(), in: Capsule())
                     .offset(x: inset + index * segmentWidth)
-                HStack(spacing: 0) {
-                    ForEach(modes) { mode in
-                        Button { withAnimation(.spring(duration: 0.4, bounce: 0.28)) { model.exportMode = mode } } label: {
-                            Text(mode.label)
-                                .font(.system(size: 13, weight: model.exportMode == mode ? .semibold : .regular))
-                                .foregroundStyle(.primary)
-                                .frame(width: segmentWidth, height: segmentHeight)
-                                .contentShape(Capsule())
-                        }.buttonStyle(.plain)
-                    }
-                }.padding(.leading, inset)
             }
+        }
+        // Labels sit outside the glass container so the lens never refracts or fades them.
+        .overlay(alignment: .leading) {
+            HStack(spacing: 0) {
+                ForEach(modes) { mode in
+                    Button { withAnimation(.spring(duration: 0.4, bounce: 0.28)) { model.exportMode = mode } } label: {
+                        Text(mode.label)
+                            .font(.system(size: 13, weight: model.exportMode == mode ? .semibold : .regular))
+                            .foregroundStyle(.primary)
+                            .frame(width: segmentWidth, height: segmentHeight)
+                            .contentShape(Capsule())
+                    }.buttonStyle(.plain)
+                }
+            }.padding(.leading, inset)
         }
     }
     private var emptyState: some View {
