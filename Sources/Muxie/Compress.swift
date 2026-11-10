@@ -4,8 +4,9 @@
 import Foundation
 
 enum ExportMode: String, CaseIterable, Identifiable {
-    case remux, compress
+    case mux, compress
     var id: String { rawValue }
+    var label: String { self == .mux ? "Mux" : "Compress" }
 }
 
 enum CompressProfile {
@@ -22,7 +23,31 @@ enum CompressSettings {
     static let encoderProfile = "main10"
     // No tune: HandBrake's "None" means the option is omitted. Passing the word "none" makes x265 reject the preset.
     static let extraOptions = "aq-mode=3:no-sao=1"
-    static let audioBitrate = 192
+    /// HandBrake av_aac is treated as unable to carry 7.1; sources above 6 channels encode as 5.1 (owner to verify 7point1 on HandBrake 1.11.2).
+    static let maxAACChannels = 6
+
+    static func audioBitrateKbps(channelCount: Int) -> Int {
+        switch channelCount {
+        case 1: return 96
+        case 2: return 192
+        case 3...6: return 384
+        default: return 512
+        }
+    }
+
+    static func encodedChannelCount(sourceChannels: Int) -> Int {
+        min(max(sourceChannels, 1), maxAACChannels)
+    }
+
+    static func handbrakeMixdown(sourceChannels: Int) -> String {
+        if sourceChannels > maxAACChannels { return "5point1" }
+        let channels = encodedChannelCount(sourceChannels: sourceChannels)
+        switch channels {
+        case 1: return "mono"
+        case 2: return "stereo"
+        default: return "none"
+        }
+    }
 }
 
 extension Engine {
@@ -62,8 +87,8 @@ extension Engine {
         return Int(bytes[17] & 7) + 8
     }
 
-    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile) -> [String] {
-        [
+    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile, sourceAudioChannels: [Int]) -> [String] {
+        var args = [
             "--input", input.path,
             "--output", output.path,
             "--format", "av_mkv",
@@ -75,14 +100,17 @@ extension Engine {
             "--maxWidth", String(profile.maxWidth),
             "--maxHeight", String(profile.maxHeight),
             "--cfr",
-            // HandBrake crops black bars by default (auto). Keep the picture exactly as the source frames it.
             "--crop-mode", "none",
             "--all-audio",
             "--aencoder", "av_aac",
-            "--mixdown", "stereo",
-            "--ab", String(CompressSettings.audioBitrate),
             "--all-subtitles",
         ]
+        if !sourceAudioChannels.isEmpty {
+            let bitrates = sourceAudioChannels.map { String(CompressSettings.audioBitrateKbps(channelCount: $0)) }.joined(separator: ",")
+            let mixdowns = sourceAudioChannels.map { CompressSettings.handbrakeMixdown(sourceChannels: $0) }.joined(separator: ",")
+            args += ["--mixdown", mixdowns, "--ab", bitrates]
+        }
+        return args
     }
 
     static func exportCompressed(plan: ExportPlan, output: URL, mkvmerge: URL, handbrake: URL, job: RunningJob, progress: @escaping @Sendable (Double) -> Void) throws -> String? {
@@ -93,15 +121,14 @@ extension Engine {
         }
         guard !fm.fileExists(atPath: output.path) else { throw MuxError.message("The output already exists. Choose a different name.") }
         let destination = output.deletingLastPathComponent()
-        let fsAttrs = try fm.attributesOfFileSystem(forPath: destination.path)
-        let freeBytes = (fsAttrs[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
-        let inputBytes = plan.sources.reduce(Int64(0)) { max($0, $1.byteSize) }
-        guard freeBytes > inputBytes * 2 else {
-            throw MuxError.message("Not enough free space on the destination disk. Need at least \(BluRayISO.bytesDescription(inputBytes * 2)).")
-        }
+        try ExportSpace.verifySpace(mode: .compress, plan: plan, destination: destination)
         let remuxStaging = destination.appendingPathComponent(".muxie-remux-\(UUID().uuidString).partial.mkv")
         let encodeStaging = destination.appendingPathComponent(".muxie-compress-\(UUID().uuidString).partial.mkv")
+        TempFileRegistry.register(remuxStaging)
+        TempFileRegistry.register(encodeStaging)
         defer {
+            TempFileRegistry.unregister(remuxStaging)
+            TempFileRegistry.unregister(encodeStaging)
             try? fm.removeItem(at: remuxStaging)
             try? fm.removeItem(at: encodeStaging)
         }
@@ -112,8 +139,9 @@ extension Engine {
         if job.cancelled { throw CancellationError() }
         let remuxProbe = try identify(remuxStaging, engine: mkvmerge, job: job)
         let sourceHeight = remuxProbe.tracks.first(where: { $0.type == "video" })?.properties.pixel_dimensions.flatMap { Int($0.split(separator: "x").last ?? "") } ?? 1080
+        let sourceAudioChannels = remuxProbe.tracks.filter { $0.type == "audio" }.map { $0.properties.audio_channels ?? 2 }
         let profile = CompressProfile(height: sourceHeight)
-        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile)
+        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile, sourceAudioChannels: sourceAudioChannels)
         let hbResult = try job.runHandBrake(engine: handbrake, arguments: hbArgs) { value in
             progress(0.12 + value * 0.88)
         }
@@ -140,6 +168,18 @@ extension Engine {
         let wantedAudio = plan.orderedTracks.filter { $0.kind == "audio" }.count
         guard (wantedAudio == 0 || !audioTracks.isEmpty), audioTracks.allSatisfy({ $0.codec.uppercased().contains("AAC") }) else {
             throw MuxError.message("Compressed output audio codec verification failed.")
+        }
+        if !sourceAudioChannels.isEmpty {
+            guard audioTracks.count == sourceAudioChannels.count else {
+                throw MuxError.message("Compressed output audio channel layout verification failed.")
+            }
+            for (actual, source) in zip(audioTracks, sourceAudioChannels) {
+                let expected = CompressSettings.encodedChannelCount(sourceChannels: source)
+                let actualChannels = actual.properties.audio_channels ?? 0
+                guard actualChannels == expected else {
+                    throw MuxError.message("Compressed output audio channel layout verification failed.")
+                }
+            }
         }
         // HDR10 / HLG sources must stay HDR: PQ is transfer 16, HLG is 18. (4K HDR10 survival is covered by the integration tests.)
         if let transfer = remuxProbe.tracks.first(where: { $0.type == "video" })?.properties.color_transfer_characteristics, transfer == 16 || transfer == 18,

@@ -117,14 +117,13 @@ enum Engine {
         guard !plan.sources.contains(where: { $0.url.standardizedFileURL.resolvingSymlinksInPath() == target }) else { throw MuxError.message("The output cannot be a source file. Choose a different name.") }
         guard !fm.fileExists(atPath: output.path) else { throw MuxError.message("The output already exists. Choose a different name.") }
         let destination = output.deletingLastPathComponent()
-        let fsAttrs = try fm.attributesOfFileSystem(forPath: destination.path)
-        let freeBytes = (fsAttrs[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
-        let inputBytes = plan.sources.reduce(Int64(0)) { max($0, $1.byteSize) }
-        guard freeBytes > inputBytes else {
-            throw MuxError.message("Not enough free space on the destination disk. Need at least \(BluRayISO.bytesDescription(inputBytes)).")
-        }
+        try ExportSpace.verifySpace(mode: .mux, plan: plan, destination: destination)
         let staging = output.deletingLastPathComponent().appendingPathComponent(".muxie-\(UUID().uuidString).partial.mkv")
-        defer { try? fm.removeItem(at: staging) }
+        TempFileRegistry.register(staging)
+        defer {
+            TempFileRegistry.unregister(staging)
+            try? fm.removeItem(at: staging)
+        }
         let result = try job.run(engine: engine, arguments: plan.arguments(output: staging), progress: progress)
         guard result.0 <= 1 else { throw MuxError.message(String(decoding: result.1, as: UTF8.self)) }
         if job.cancelled { throw CancellationError() }

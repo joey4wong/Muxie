@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func bind(_ model: AppModel) { self.model = model }
     func applicationDidFinishLaunching(_ notification: Notification) {
         BluRayISO.recoverStaleMounts()
+        Task.detached(priority: .utility) { TempFileRegistry.cleanupStale() }
         Task { @MainActor in model?.recoverStaleISOMounts() }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

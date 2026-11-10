@@ -51,15 +51,15 @@ struct ContentView: View {
                     }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
                     VStack(spacing: 8) {
                         Picker("Export", selection: $model.exportMode) {
-                            ForEach(model.compressEligible ? ExportMode.allCases : [.remux]) { mode in
-                                Text(mode == .remux ? "Remux" : "Compress").tag(mode)
+                            ForEach(model.compressEligible ? ExportMode.allCases : [.mux]) { mode in
+                                Text(mode.label).tag(mode)
                             }
                         }
                         .pickerStyle(.segmented).labelsHidden()
                         .frame(maxWidth: 240)
                         .disabled(model.busy)
                         if model.exportMode == .compress && model.compressEligible {
-                            Text("Audio converts to AAC stereo.")
+                            Text("Audio converts to AAC.")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }

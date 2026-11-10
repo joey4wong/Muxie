@@ -173,6 +173,60 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         } catch is CancellationError { }
         try check(compressWitness.value && !fm.fileExists(atPath: compressCancelURL.path), "Compress cancellation removes partial output")
         try check(CompressProfile(height: 1080).rf == 21 && CompressProfile(height: 2160).rf == 23 && CompressProfile(height: 2160).maxWidth == 3840, "Compress profile table")
+        try check(ExportMode.mux.label == "Mux" && ExportMode.compress.label == "Compress", "Export mode labels Mux and Compress")
+        try check(
+            CompressSettings.audioBitrateKbps(channelCount: 1) == 96
+                && CompressSettings.audioBitrateKbps(channelCount: 2) == 192
+                && CompressSettings.audioBitrateKbps(channelCount: 6) == 384
+                && CompressSettings.audioBitrateKbps(channelCount: 8) == 512,
+            "Audio channel-count to bitrate table"
+        )
+        try check(CompressSettings.encodedChannelCount(sourceChannels: 8) == 6, "7.1 and above cap at 5.1 for AAC")
+        let spaceSource = MediaSource(id: UUID(), url: video, container: "MP4", byteSize: 10_000_000)
+        let spacePlan = ExportPlan(sources: [spaceSource], tracks: model.tracks.filter(\.enabled))
+        try check(ExportSpace.requiredBytes(mode: .mux, plan: spacePlan) == 10_000_000, "Mux space estimate equals checked input bytes")
+        try check(ExportSpace.requiredBytes(mode: .compress, plan: spacePlan) == 10_000_000 + 5_000_000, "Compress space estimate includes temp remux and conservative output")
+        let spaceMsg = ExportSpace.spaceErrorMessage(required: 40_000_000_000, available: 21_000_000_000)
+        try check(spaceMsg.contains("40") && spaceMsg.contains("21") && spaceMsg.contains("free on this disk"), "Space failure message format")
+        var sleepBegan = 0, sleepEnded = 0
+        let defaultSleepProvider = IdleSleepActivity.provider
+        IdleSleepActivity.provider = { _ in sleepBegan += 1; return { sleepEnded += 1 } }
+        IdleSleepActivity.begin(); IdleSleepActivity.end()
+        try check(sleepBegan == 1 && sleepEnded == 1, "Idle sleep activity begins once and ends on release")
+        IdleSleepActivity.provider = defaultSleepProvider
+        let registryDir = run.appendingPathComponent("app-support", isDirectory: true)
+        try fm.createDirectory(at: registryDir, withIntermediateDirectories: true)
+        setenv("MUXIE_APP_SUPPORT", registryDir.path, 1)
+        let stalePartial = registryDir.appendingPathComponent(".muxie-remux-deadbeef.partial.mkv")
+        try Data(repeating: 1, count: 32).write(to: stalePartial)
+        TempFileRegistry.replaceAll([TempFileRecord(path: stalePartial.path, pid: 2_000_000_001)])
+        TempFileRegistry.cleanupStale()
+        try check(!fm.fileExists(atPath: stalePartial.path) && TempFileRegistry.load().isEmpty, "Stale temp registry entry removes matching partial when PID is dead")
+        let livePartial = registryDir.appendingPathComponent(".muxie-compress-live.partial.mkv")
+        try Data(repeating: 2, count: 16).write(to: livePartial)
+        TempFileRegistry.replaceAll([TempFileRecord(path: livePartial.path, pid: ProcessInfo.processInfo.processIdentifier)])
+        TempFileRegistry.cleanupStale()
+        try check(fm.fileExists(atPath: livePartial.path) && TempFileRegistry.load().count == 1, "Live PID temp entry is not removed")
+        let otherFile = registryDir.appendingPathComponent("not-managed.mkv")
+        try Data("x".utf8).write(to: otherFile)
+        TempFileRegistry.replaceAll([TempFileRecord(path: otherFile.path, pid: 2_000_000_002)])
+        TempFileRegistry.cleanupStale()
+        try check(fm.fileExists(atPath: otherFile.path), "Non-matching temp file name is never deleted")
+        try? fm.removeItem(at: livePartial)
+        try? fm.removeItem(at: otherFile)
+        TempFileRegistry.replaceAll([])
+        let dualAudioModel = AppModel()
+        await dualAudioModel.importFiles([fixture.appendingPathComponent("dual-audio.mp4")])
+        for track in dualAudioModel.tracks { dualAudioModel.boolBinding(track.id, \.enabled).wrappedValue = true }
+        dualAudioModel.exportMode = .compress
+        let dualOut = run.appendingPathComponent("dual-audio-compress.mkv")
+        await dualAudioModel.export(to: dualOut)
+        if !fm.fileExists(atPath: dualOut.path) { throw MuxError.message("Dual-audio compress failed: " + (dualAudioModel.error ?? "no error")) }
+        let dualProbe = try Engine.identify(dualOut, engine: engine)
+        let dualAudios = dualProbe.tracks.filter { $0.type == "audio" }.sorted { ($0.properties.audio_channels ?? 0) < ($1.properties.audio_channels ?? 0) }
+        try check(dualAudios.count == 2 && dualAudios[0].properties.audio_channels == 2 && dualAudios[1].properties.audio_channels == 6,
+            "Compress dual audio: AAC 2-channel and 6-channel tracks")
+        try check(dualAudios.allSatisfy { $0.codec.uppercased().contains("AAC") }, "Compress dual audio: both tracks are AAC")
         let bdmvRoot = fixture.appendingPathComponent("bdmv-title-fixture")
         let playlistDir = bdmvRoot.appendingPathComponent("BDMV/PLAYLIST", isDirectory: true)
         let streamDir = bdmvRoot.appendingPathComponent("BDMV/STREAM", isDirectory: true)

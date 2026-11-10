@@ -13,9 +13,11 @@ Nothing else needs to be installed: Muxie.app contains its own copies of `mkvmer
 1. Open a video, or drop it into the window.
 2. Add tracks from an audio file, a subtitle file or another video. Imported tracks start unchecked, and no row is focused.
 3. Check the tracks to include. Click a row to edit its name, language, default and forced flags.
-4. Choose **Remux** or **Compress**, then click **Export** and save to a new filename. Originals are never modified, and existing files are never overwritten.
+4. Choose **Mux** or **Compress**, then click **Export** and save to a new filename. Originals are never modified, and existing files are never overwritten.
 
-**Remux** copies tracks without re-encoding. **Compress** re-encodes video to H.265 10-bit (1080p sources stay 1080p at RF 21, 4K sources stay 4K at RF 23, Medium preset, constant frame rate; black bars are kept and HDR10 is preserved) and audio to AAC stereo 192 kbps; all checked subtitles are kept. Compress is hidden when the video is already HEVC 10-bit at 1080p or below. No decryption, mixing or DRM handling. External audio becomes a separate selectable track. Subtitles stay soft subtitles. Chapters, tags and attachments from the first file are kept; subtitle fonts from added files are kept too.
+**Mux** copies tracks without re-encoding. **Compress** re-encodes video to H.265 10-bit (1080p sources stay 1080p at RF 21, 4K sources stay 4K at RF 23, Medium preset, constant frame rate; black bars are kept and HDR10 is preserved) and every checked audio track to AAC with the same channel layout (mono 96 kbps, stereo 192 kbps, 3–6 ch 384 kbps, 7–8 ch 512 kbps); all checked subtitles are kept. Compress is hidden when the video is already HEVC 10-bit at 1080p or below. No decryption, mixing or DRM handling. External audio becomes a separate selectable track. Subtitles stay soft subtitles. Chapters, tags and attachments from the first file are kept; subtitle fonts from added files are kept too.
+
+While an export is running, Muxie prevents idle system sleep (the display may still sleep). Closing the lid still puts the Mac to sleep.
 
 Unnamed tracks are labeled Video / Audio / Subtitle (numbered per type when there are several); these labels are not written into the file. The window's minimum height grows with the track count, so every row stays visible without a scroller. Only if the rows cannot fit on the display are they paginated.
 

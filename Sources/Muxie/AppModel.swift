@@ -20,7 +20,7 @@ import UniformTypeIdentifiers
     @Published var filter = "All"
     @Published var trackPage = 0
     @Published var workspaceScreenHeight: CGFloat = 900
-    @Published var exportMode: ExportMode = .remux
+    @Published var exportMode: ExportMode = .mux
     @Published var compressEligible = true
     var job: RunningJob?
     private var isoMounts: [UUID: BluRayMount] = [:]
@@ -116,7 +116,7 @@ import UniformTypeIdentifiers
             }
         }
         importing = false
-        exportMode = .remux
+        exportMode = .mux
         await refreshCompressEligibility()
         if !failures.isEmpty { fail(failures.joined(separator: "\n\n")) }
     }
@@ -131,7 +131,7 @@ import UniformTypeIdentifiers
             try Engine.videoAlreadyHEVC1080p(tracks, sources: sources, engine: engine)
         }.value) ?? false
         compressEligible = !already
-        if !compressEligible && exportMode == .compress { exportMode = .remux }
+        if !compressEligible && exportMode == .compress { exportMode = .mux }
     }
     func binding(_ id: UUID, _ keyPath: WritableKeyPath<MediaTrack, String>) -> Binding<String> {
         Binding(get: { self.tracks.first { $0.id == id }?[keyPath: keyPath] ?? "" }, set: { value in
@@ -159,7 +159,7 @@ import UniformTypeIdentifiers
         guard !busy else { return }
         detachAllISO()
         sources = []; tracks = []; selected = nil; completed = nil; warning = nil; filter = "All"; trackPage = 0
-        exportMode = .remux; compressEligible = true
+        exportMode = .mux; compressEligible = true
     }
     func recoverStaleISOMounts() { BluRayISO.recoverStaleMounts(); isoMounts = [:] }
     func prepareForQuit() { detachAllISO() }
@@ -199,11 +199,18 @@ import UniformTypeIdentifiers
     func export(to output: URL) async {
         guard canExport, let engine = Engine.executable else { return }
         exporting = true; progress = 0; completed = nil; warning = nil
-        do { try await ensureISOMounted() } catch { exporting = false; fail(error.localizedDescription); return }
+        IdleSleepActivity.begin()
+        do { try await ensureISOMounted() } catch {
+            exporting = false
+            IdleSleepActivity.end()
+            fail(error.localizedDescription)
+            return
+        }
         let plan = ExportPlan(sources: sources, tracks: tracks); let running = RunningJob(); job = running
         ExportActivity.shared.active = true; ExportActivity.shared.cancel = { running.cancel() }
         defer {
             detachAllISO()
+            IdleSleepActivity.end()
             ExportActivity.shared.active = false; ExportActivity.shared.cancel = nil
             if ExportActivity.shared.terminating { NSApp.reply(toApplicationShouldTerminate: true) }
         }
