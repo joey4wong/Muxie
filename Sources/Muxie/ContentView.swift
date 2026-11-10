@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 
 private let accent = Color("AccentColor")
 /// Native Liquid Glass button (system `.glass` style, capsule shape). `compact: false` is the large variant.
-private struct NeutralGlassButtonStyle: ButtonStyle {
+struct NeutralGlassButtonStyle: ButtonStyle {
     var compact = true
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
@@ -57,7 +57,7 @@ struct ContentView: View {
                         }
                         .pickerStyle(.segmented).labelsHidden()
                         .frame(maxWidth: 240)
-                        .disabled(model.busy)
+                        .disabled(model.importing)
                         if model.exportMode == .compress && model.compressEligible {
                             Text("Audio converts to AAC.")
                                 .font(.system(size: 10))
@@ -71,7 +71,7 @@ struct ContentView: View {
                     }
                     .frame(height: WorkspaceLayout.exportHeight)
                     Group {
-                        if model.exporting || model.importing || model.completed != nil { activityBar }
+                        if model.importing || model.queueActivityActive || model.completed != nil { activityBar }
                         else { Color.clear }
                     }.frame(height: WorkspaceLayout.activityHeight)
                 }
@@ -82,11 +82,17 @@ struct ContentView: View {
         .navigationTitle(model.sources.first?.displayURL.lastPathComponent ?? "Muxie")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button { model.showQueue = true } label: {
+                    Label("\(model.queueBadgeCount)", systemImage: "tray.full")
+                }.help("Export queue").disabled(model.queueBadgeCount == 0)
                 if !model.sources.isEmpty {
-                    Button { model.reset() } label: { Image(systemName: "doc.badge.plus") }.help("New Project").disabled(model.busy)
-                    Button { model.openFiles(additional: true) } label: { Label("Add Tracks", systemImage: "plus") }.disabled(model.busy)
+                    Button { model.reset() } label: { Image(systemName: "doc.badge.plus") }.help("New Project").disabled(model.importing)
+                    Button { model.openFiles(additional: true) } label: { Label("Add Tracks", systemImage: "plus") }.disabled(model.importing)
                 }
             }
+        }
+        .popover(isPresented: $model.showQueue) {
+            QueuePanelView().environmentObject(model)
         }
         .sheet(isPresented: $showCompactInspector) {
             VStack(spacing: 0) {
@@ -105,7 +111,7 @@ struct ContentView: View {
             if targeted { RoundedRectangle(cornerRadius: 15).strokeBorder(accent, lineWidth: 2).padding(4).allowsHitTesting(false) }
         }
         .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
-            guard !model.busy else { return false }
+            guard !model.importing else { return false }
             Task {
                 var urls: [URL] = []
                 for provider in providers {
@@ -124,7 +130,7 @@ struct ContentView: View {
             KnotMark().frame(width: 132, height: 132)
             Button { model.openFiles() } label: {
                 Label("Open Video…", systemImage: "plus").font(.system(size: 13, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 5)
-            }.buttonStyle(NeutralGlassButtonStyle(compact: false)).disabled(model.busy)
+            }.buttonStyle(NeutralGlassButtonStyle(compact: false)).disabled(model.importing)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func trackList(compact: Bool) -> some View {
@@ -142,7 +148,7 @@ struct ContentView: View {
                     }.buttonStyle(.plain)
                 }
                 Spacer(minLength: 0)
-            }.frame(height: WorkspaceLayout.filterHeight).disabled(model.busy)
+            }.frame(height: WorkspaceLayout.filterHeight).disabled(model.importing)
             GlassEffectContainer(spacing: WorkspaceLayout.rowSpacing) {
                 VStack(spacing: WorkspaceLayout.rowSpacing) {
                     ForEach(model.pagedTracks) { track in trackRow(track, compact: compact) }
@@ -190,7 +196,7 @@ struct ContentView: View {
                 model.selected = track.id
                 if compact { showCompactInspector = true }
             }
-            .disabled(model.busy)
+            .disabled(model.importing)
     }
     private var inspector: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -219,7 +225,7 @@ struct ContentView: View {
                 }
             }
             Spacer(minLength: 0)
-        }.padding(18).frame(maxHeight: .infinity, alignment: .topLeading).disabled(model.busy)
+        }.padding(18).frame(maxHeight: .infinity, alignment: .topLeading).disabled(model.importing)
     }
     private var activityBar: some View {
         HStack(spacing: 12) {
@@ -227,11 +233,12 @@ struct ContentView: View {
                 ProgressView().controlSize(.small)
                 Text("Importing…").font(.system(size: 11))
                 Spacer()
-            } else if model.exporting {
-                ProgressView(value: model.progress).frame(width: 150)
-                Text("\(Int(model.progress * 100))%").font(.system(size: 11, design: .monospaced)).monospacedDigit()
+            } else if model.queueActivityActive, let job = model.runningQueueJob {
+                ProgressView(value: job.progress).frame(width: 150)
+                Text(job.output.lastPathComponent).font(.system(size: 11)).lineLimit(1)
+                Text("\(Int(job.progress * 100))%").font(.system(size: 11, design: .monospaced)).monospacedDigit()
                 Spacer()
-                Button("Cancel", role: .cancel) { model.job?.cancel() }.buttonStyle(NeutralGlassButtonStyle())
+                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle())
             } else if let output = model.completed {
                 Image(systemName: model.warning == nil ? "checkmark.circle.fill" : "exclamationmark.circle.fill").foregroundStyle(model.warning == nil ? accent : Color.orange)
                 Text(output.lastPathComponent).font(.system(size: 11)).lineLimit(1)

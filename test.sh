@@ -19,7 +19,7 @@ printf '1\n00:00:00,500 --> 00:00:03,500\nHello, Muxie.\n' > "$T/English.srt"
 xcrun swiftc -disable-sandbox -swift-version 5 -target arm64-apple-macosx26.0 \
   "$ROOT/Sources/Muxie/WorkspaceLayout.swift" "$ROOT/Sources/Muxie/Engine.swift" "$ROOT/Sources/Muxie/Compress.swift" \
   "$ROOT/Sources/Muxie/ExportSpace.swift" "$ROOT/Sources/Muxie/IdleSleepActivity.swift" "$ROOT/Sources/Muxie/TempFileRegistry.swift" \
-  "$ROOT/Sources/Muxie/AppModel.swift" "$ROOT/Sources/Muxie/BluRayISO.swift" "$ROOT/Tests/Integration.swift" -o "$T/integration"
+  "$ROOT/Sources/Muxie/ExportQueue.swift" "$ROOT/Sources/Muxie/AppModel.swift" "$ROOT/Sources/Muxie/BluRayISO.swift" "$ROOT/Tests/Integration.swift" -o "$T/integration"
 # The engine under test is the one bundled in the built app (build.sh first), so tests pass without MKVToolNix installed.
 BUNDLED_BIN="${MUXIE_APP:-$ROOT/dist/Muxie.app}/Contents/Resources/bin"
 [[ -x "$BUNDLED_BIN/mkvmerge" ]] || { echo "Run ./build.sh first: no bundled mkvmerge at $BUNDLED_BIN" >&2; exit 1; }
