@@ -229,7 +229,7 @@ import UniformTypeIdentifiers
     /// Standard release name for films that are compressed (Compress mode) or already HEVC 10-bit 1080p or below:
     /// Title.Year.1080p.BluRay.x265.10bit.AAC-Joey.mkv (4K in place of 1080p for UHD). Nil if no year can be found in the file name.
     func sceneName(from baseName: String) -> String? {
-        guard exportMode == .compress || !compressEligible else { return nil }
+        guard exportMode == .compress else { return nil }
         let cleaned = baseName.replacingOccurrences(of: "-compressed", with: "").replacingOccurrences(of: "-muxie", with: "")
         let words = cleaned.split(whereSeparator: { " ._()[]".contains($0) }).map(String.init)
         guard let yearIndex = words.lastIndex(where: { $0.count == 4 && $0.hasPrefix("19") || $0.count == 4 && $0.hasPrefix("20") }),
@@ -238,9 +238,9 @@ import UniformTypeIdentifiers
         let title = words[..<yearIndex].map { String($0.unicodeScalars.filter { !bad.contains($0) }) }.filter { !$0.isEmpty }.joined(separator: ".")
         guard !title.isEmpty else { return nil }
         let height = tracks.first(where: { $0.kind == "video" && $0.enabled })?.detail.split(separator: "×").last.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) } ?? 1080
-        let res = (exportMode == .compress && height > 1080) ? "4K" : "1080p"
+        let res = height > 1080 ? "4K" : "1080p"
         // Hardware encoding is named HEVC; x265 software (and sources that are already HEVC, which are not re-encoded) is named x265.
-        let codec = (exportMode == .compress && CompressEncoder.current == .hardware) ? "HEVC" : "x265"
+        let codec = CompressEncoder.current == .hardware ? "HEVC" : "x265"
         return "\(title).\(words[yearIndex]).\(res).BluRay.\(codec).10bit.AAC-Joey.mkv"
     }
     func enqueueExport(to output: URL) {
