@@ -34,6 +34,7 @@ struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var targeted = false
     @State private var showCompactInspector = false
+    @AppStorage(CompressEncoder.defaultsKey) private var encoderRaw = CompressEncoder.hardware.rawValue
     var body: some View {
         GeometryReader { geometry in
             if model.sources.isEmpty {
@@ -73,6 +74,12 @@ struct ContentView: View {
         .navigationTitle(model.sources.first?.displayURL.lastPathComponent ?? "Muxie")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                if !model.sources.isEmpty && model.exportMode == .compress {
+                    Picker("Encoder", selection: $encoderRaw) {
+                        ForEach(CompressEncoder.allCases) { Text($0.shortLabel).tag($0.rawValue) }
+                    }
+                    .pickerStyle(.menu).help((CompressEncoder(rawValue: encoderRaw) ?? .hardware).detail).disabled(model.importing)
+                }
                 if !model.sources.isEmpty {
                     Button { model.reset() } label: { Image(systemName: "doc.badge.plus") }.help("New Project").disabled(model.importing)
                     Button { model.openFiles(additional: true) } label: { Label("Add Tracks", systemImage: "plus") }.disabled(model.importing)
