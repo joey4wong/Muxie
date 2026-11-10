@@ -61,7 +61,7 @@ struct ContentView: View {
                     }
                     .frame(height: WorkspaceLayout.exportHeight)
                     Group {
-                        if model.importing || model.queueActivityActive || model.completed != nil { activityBar }
+                        if model.importing || model.completed != nil { activityBar }
                         else { Color.clear }
                     }.frame(height: WorkspaceLayout.activityHeight)
                 }
@@ -69,21 +69,15 @@ struct ContentView: View {
             }
         }
         .background(GlassBackdrop())
+        .safeAreaInset(edge: .top, spacing: 0) { QueueStripView() }
         .navigationTitle(model.sources.first?.displayURL.lastPathComponent ?? "Muxie")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                // Stays enabled while any job (also a finished or failed one) is listed, so its result stays reachable.
-                Button { model.showQueue = true } label: {
-                    if model.queueBadgeCount > 0 { Label("\(model.queueBadgeCount)", systemImage: "tray.full") } else { Image(systemName: "tray.full") }
-                }.help("Export queue").disabled(model.queueJobs.isEmpty)
                 if !model.sources.isEmpty {
                     Button { model.reset() } label: { Image(systemName: "doc.badge.plus") }.help("New Project").disabled(model.importing)
                     Button { model.openFiles(additional: true) } label: { Label("Add Tracks", systemImage: "plus") }.disabled(model.importing)
                 }
             }
-        }
-        .popover(isPresented: $model.showQueue) {
-            QueuePanelView().environmentObject(model)
         }
         .sheet(isPresented: $showCompactInspector) {
             VStack(spacing: 0) {
@@ -255,12 +249,6 @@ struct ContentView: View {
                 ProgressView().controlSize(.small)
                 Text("Importing…").font(.system(size: 11))
                 Spacer()
-            } else if model.queueActivityActive, let job = model.runningQueueJob {
-                ProgressView(value: job.progress).frame(width: 150)
-                Text(job.output.lastPathComponent).font(.system(size: 11)).lineLimit(1)
-                Text("\(Int(job.progress * 100))%").font(.system(size: 11, design: .monospaced)).monospacedDigit()
-                Spacer()
-                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle())
             } else if let output = model.completed {
                 Image(systemName: model.warning == nil ? "checkmark.circle.fill" : "exclamationmark.circle.fill").foregroundStyle(model.warning == nil ? accent : Color.orange)
                 Text(output.lastPathComponent).font(.system(size: 11)).lineLimit(1)
