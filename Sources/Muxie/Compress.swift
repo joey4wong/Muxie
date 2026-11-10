@@ -20,6 +20,8 @@ enum CompressProfile {
 
 enum CompressSettings {
     static let encoder = "vt_h265_10bit"
+    /// The VideoToolbox encoder offers `speed` and `quality`; quality is the better picture per bit.
+    static let encoderPreset = "quality"
     /// Included when HandBrake lists main10 for vt_h265_10bit (`HandBrakeCLI --encoder-profile-list vt_h265_10bit`).
     static let encoderProfile = "main10"
     /// HandBrake av_aac is treated as unable to carry 7.1; sources above 6 channels encode as 5.1 (owner to verify 7point1 on HandBrake 1.11.2).
@@ -95,6 +97,7 @@ extension Engine {
             "--format", "av_mkv",
             "--encoder", CompressSettings.encoder,
             "--encoder-profile", CompressSettings.encoderProfile,
+            "--encoder-preset", CompressSettings.encoderPreset,
             "--quality", String(profile.quality),
             "--maxWidth", String(profile.maxWidth),
             "--maxHeight", String(profile.maxHeight),
