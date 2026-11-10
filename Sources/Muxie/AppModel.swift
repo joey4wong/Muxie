@@ -100,7 +100,7 @@ import UniformTypeIdentifiers
                     bytes = Int64((try? importURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
                 }
                 sources.append(MediaSource(id: sourceID, url: importURL, originURL: originURL, container: probe.container.type ?? importURL.pathExtension.uppercased(), byteSize: bytes, featureNote: featureNote))
-                if let openedMount { isoMounts[sourceID] = openedMount; openedMount = nil }
+                if let m = openedMount { isoMounts[sourceID] = m; openedMount = nil }
                 var added: [MediaTrack] = []
                 for t in supported {
                     let detail: String
@@ -150,10 +150,10 @@ import UniformTypeIdentifiers
         for mount in isoMounts.values { BluRayISO.detach(mount) }
         isoMounts = [:]
     }
-    private func ensureISOMounted() throws {
+    private func ensureISOMounted() async throws {
         for index in sources.indices {
             guard let iso = sources[index].originURL, isoMounts[sources[index].id] == nil else { continue }
-            let mount = try BluRayISO.attach(iso: iso)
+            let mount = try await Task.detached(priority: .userInitiated) { try BluRayISO.attach(iso: iso) }.value
             isoMounts[sources[index].id] = mount
             sources[index].url = mount.m2tsURL
             sources[index].byteSize = mount.m2tsBytes
@@ -174,7 +174,7 @@ import UniformTypeIdentifiers
     func export(to output: URL) async {
         guard canExport, let engine = Engine.executable else { return }
         exporting = true; progress = 0; completed = nil; warning = nil
-        do { try ensureISOMounted() } catch { exporting = false; fail(error.localizedDescription); return }
+        do { try await ensureISOMounted() } catch { exporting = false; fail(error.localizedDescription); return }
         let plan = ExportPlan(sources: sources, tracks: tracks); let running = RunningJob(); job = running
         ExportActivity.shared.active = true; ExportActivity.shared.cancel = { running.cancel() }
         defer {

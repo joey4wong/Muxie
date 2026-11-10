@@ -22,15 +22,10 @@ enum BluRayISO {
     }
 
     static func attach(iso: URL) throws -> BluRayMount {
-        let data = try runHdiutil(["attach", "-readonly", "-nobrowse", "-plist", iso.path])
-        guard let objects = try PropertyListSerialization.propertyList(from: data, format: nil) as? [[String: Any]],
-              let first = objects.first else { throw MuxError.message("Could not mount \(iso.lastPathComponent).") }
-        let mountPoint = (first["mount-point"] as? String).map { URL(fileURLWithPath: $0, isDirectory: true) }
-        let device = (first["dev-entry"] as? String) ?? (first["device"] as? String)
-        guard let mountPoint, let device else {
-            if let device { detachDevice(device) }
-            throw MuxError.message("Could not mount \(iso.lastPathComponent).")
-        }
+        let data = try runHdiutil(["attach", "-readonly", "-nobrowse", "-noverify", "-plist", iso.path])
+        let attached = try parseAttachOutput(data, isoName: iso.lastPathComponent)
+        let device = attached.device
+        let mountPoint = attached.mountPoint
         let layout = try classifyVolume(at: mountPoint)
         switch layout {
         case .encrypted:
@@ -49,9 +44,28 @@ enum BluRayISO {
             detachDevice(device)
             throw MuxError.message("No .m2ts files were found on this disc image.")
         }
-        var mount = BluRayMount(isoURL: iso, mountPoint: mountPoint, device: device, m2tsURL: feature.url, m2tsName: feature.url.lastPathComponent, m2tsBytes: feature.bytes)
+        let mount = BluRayMount(isoURL: iso, mountPoint: mountPoint, device: device, m2tsURL: feature.url, m2tsName: feature.url.lastPathComponent, m2tsBytes: feature.bytes)
         remember(mount)
         return mount
+    }
+
+    /// `hdiutil attach -plist` prints a dictionary whose `system-entities` array lists the whole disk and
+    /// every partition/volume; only the volume entity carries `mount-point`. Older/odd outputs may be a bare array.
+    static func parseAttachOutput(_ data: Data, isoName: String) throws -> (device: String, mountPoint: URL) {
+        let root = try? PropertyListSerialization.propertyList(from: data, format: nil)
+        let entities: [[String: Any]]
+        if let dict = root as? [String: Any], let list = dict["system-entities"] as? [[String: Any]] { entities = list }
+        else if let list = root as? [[String: Any]] { entities = list }
+        else { throw MuxError.message("Could not mount \(isoName).") }
+        let devices = entities.compactMap { ($0["dev-entry"] as? String) ?? ($0["device"] as? String) }
+        // Detach via the whole-disk node (shortest path, e.g. /dev/disk4 rather than /dev/disk4s1) so every slice goes away.
+        let wholeDisk = devices.min(by: { $0.count < $1.count })
+        let mountPath = entities.compactMap { $0["mount-point"] as? String }.first
+        guard let wholeDisk, let mountPath else {
+            if let wholeDisk { detachDevice(wholeDisk) }
+            throw MuxError.message("Could not mount \(isoName).")
+        }
+        return (wholeDisk, URL(fileURLWithPath: mountPath, isDirectory: true))
     }
 
     static func detach(_ mount: BluRayMount) {
