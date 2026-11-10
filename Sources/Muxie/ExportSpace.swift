@@ -16,7 +16,8 @@ enum ExportSpace {
         let input = checkedInputBytes(plan: plan)
         guard mode == .compress else { return input }
         let outputEstimate = Int64((Double(input) * compressOutputRatio).rounded(.up))
-        return input + max(outputEstimate, 1)
+        let staging = Int64((Double(input) * 0.20).rounded(.up))
+        return input + max(outputEstimate, 1) + staging
     }
 
     static func spaceErrorMessage(required: Int64, available: Int64) -> String {

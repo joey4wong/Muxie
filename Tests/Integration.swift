@@ -78,6 +78,12 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let probe = try Engine.identify(merged, engine: engine)
         try check(probe.tracks.count == 5 && probe.tracks.filter { $0.type == "audio" }.count == 2 && probe.tracks.filter { $0.type == "subtitles" }.count == 2, "Mux two selectable audio tracks & two subtitles")
         try check(probe.tracks[2].properties.track_name == "国语 ‘配音’ & Stereo" && probe.tracks[3].properties.track_name == "简体中文 / SRT" && probe.tracks[3].properties.language_ietf == "zh-Hans" && probe.tracks[3].properties.default_track == true, "Unicode names, language & default flag persisted")
+        let englishSub = model.tracks.last!
+        model.intBinding(englishSub.id, \.delayMs).wrappedValue = 750
+        let delayed = run.appendingPathComponent("subtitle-delay.mkv")
+        await model.export(to: delayed)
+        let delayedPlan = ExportPlan(sources: model.sources, tracks: model.tracks.filter(\.enabled))
+        try check(delayedPlan.arguments(output: delayed).contains("--sync") && delayedPlan.arguments(output: delayed).contains("750"), "Subtitle delay passes mkvmerge --sync")
         let originalAudio = model.tracks.first { $0.kind == "audio" }!
         model.boolBinding(originalAudio.id, \.enabled).wrappedValue = false
         let english = model.tracks.last!
@@ -135,7 +141,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let again = AppModel()
         await again.importFiles([compressedURL])
         for track in again.tracks where track.kind == "video" { again.boolBinding(track.id, \.enabled).wrappedValue = true }
-        await again.refreshCompressEligibility()
+        again.refreshCompressEligibility()
         try check(!again.compressEligible, "Compress is not offered for HEVC 10-bit video at or below 1080p")
         // Every audio track unchecked: a video-only compressed output is valid, not a verification failure.
         let silentCompress = AppModel()
@@ -160,6 +166,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let hdrModel = AppModel()
         await hdrModel.importFiles([fixture.appendingPathComponent("hdr10-4k.mkv")])
         for track in hdrModel.tracks { hdrModel.boolBinding(track.id, \.enabled).wrappedValue = true }
+        try check(hdrModel.tracks.first(where: { $0.kind == "video" })?.hdrBadge == .hdr10, "HDR10 badge on import")
         try check(hdrModel.compressEligible, "Compress is offered for a 4K HEVC source")
         hdrModel.exportMode = .compress
         let hdrURL = run.appendingPathComponent("hdr compress.mkv")
@@ -190,7 +197,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let spaceTrack = MediaTrack(sourceID: spaceSource.id, trackID: 0, kind: "video", codec: "AVC", name: "", language: "und", isDefault: false, isForced: false, enabled: true, detail: "")
         let spacePlan = ExportPlan(sources: [spaceSource], tracks: [spaceTrack])
         try check(ExportSpace.requiredBytes(mode: .mux, plan: spacePlan) == 10_000_000, "Mux space estimate equals checked input bytes")
-        try check(ExportSpace.requiredBytes(mode: .compress, plan: spacePlan) == 10_000_000 + 5_000_000, "Compress space estimate includes temp remux and conservative output")
+        try check(ExportSpace.requiredBytes(mode: .compress, plan: spacePlan) == 10_000_000 + 5_000_000 + 2_000_000, "Compress space estimate includes temp staging, remux and conservative output")
         let spaceMsg = ExportSpace.spaceErrorMessage(required: 40_000_000_000, available: 21_000_000_000)
         try check(spaceMsg.contains("40") && spaceMsg.contains("21") && spaceMsg.contains("free on this disk"), "Space failure message format")
         var sleepBegan = 0, sleepEnded = 0
@@ -259,7 +266,14 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let hbArgs = Engine.handbrakeArguments(input: URL(fileURLWithPath: "/in.mkv"), output: URL(fileURLWithPath: "/out.mkv"), profile: CompressProfile(height: 1080), sourceAudioChannels: [2, 6, 8, 6], sourceAudioIsAAC: [true, false, false, true])
         func hbValue(_ flag: String) -> String? { hbArgs.firstIndex(of: flag).map { hbArgs[$0 + 1] } }
         try check(hbValue("--aencoder") == "copy:aac,av_aac,av_aac,copy:aac" && hbValue("--ab") == "192,384,384,384" && hbValue("--mixdown") == "stereo,none,5point1,none" && hbValue("--audio-fallback") == "av_aac", "Compress audio arguments: copy AAC, encode the rest, 7.1 at 384 kbps as 5.1")
-        try check(hbArgs.contains("vt_h265_10bit") && !hbArgs.contains("--encopts") && hbValue("--encoder-preset") == "quality", "Compress video arguments use VideoToolbox H.265 10-bit without x265 options")
+        try check(hbArgs.contains("vt_h265_10bit") && hbArgs.contains("--subtitle") && hbValue("--subtitle") == "none" && !hbArgs.contains("--encopts") && hbValue("--encoder-preset") == "quality", "Compress video arguments use VideoToolbox H.265 10-bit without x265 options")
+        let parsed = Engine.parseHandBrakeEncodingLine("Encoding: task 1 of 1, 12.50 % (120.5 fps, avg 118.2 fps, ETA 00h05m30s)")
+        try check(parsed?.percent == 12.5 && parsed?.avgFPS == 118.2 && parsed?.etaSeconds == 330, "HandBrake encoding line parser")
+        let persisted = QueueJob.snapshot(sources: model.sources, tracks: model.tracks, mode: .mux, output: run.appendingPathComponent("persisted.mkv"))
+        var store = PersistedQueue(jobs: [PersistedQueueJob(job: persisted, wasInterrupted: true)], hold: true, resumePending: true)
+        let encodeData = try JSONEncoder().encode(store)
+        store = try JSONDecoder().decode(PersistedQueue.self, from: encodeData)
+        try check(store.jobs.first?.job.output.lastPathComponent == "persisted.mkv" && store.hold && store.resumePending, "Queue persistence roundtrip")
         let swArgs = Engine.handbrakeArguments(input: URL(fileURLWithPath: "/in.mkv"), output: URL(fileURLWithPath: "/out.mkv"), profile: CompressProfile(height: 2160), encoder: .software, sourceAudioChannels: [2], sourceAudioIsAAC: [true])
         func swValue(_ flag: String) -> String? { swArgs.firstIndex(of: flag).map { swArgs[$0 + 1] } }
         try check(swValue("--encoder") == "x265_10bit" && swValue("--encoder-preset") == "medium" && swValue("--quality") == "23" && swValue("--encopts") == "aq-mode=3:no-sao=1" && swValue("--encoder-profile") == "main10", "Software encoder uses x265 10-bit with the RF scale")

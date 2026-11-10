@@ -70,7 +70,19 @@ struct ContentView: View {
             }
         }
         .background(GlassBackdrop())
-        .safeAreaInset(edge: .top, spacing: 0) { QueueStripView() }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                if model.queueResumePending {
+                    HStack(spacing: 10) {
+                        Text("Saved export queue is ready.").font(.system(size: 11))
+                        Spacer()
+                        Button("Continue Queue") { model.continuePersistedQueue() }.buttonStyle(NeutralGlassButtonStyle())
+                    }.padding(.horizontal, 14).padding(.vertical, 8)
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 12).padding(.top, 6)
+                }
+                QueueStripView()
+            }
+        }
         .navigationTitle(model.sources.first?.displayURL.lastPathComponent ?? "Muxie")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -205,7 +217,11 @@ struct ContentView: View {
                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 5) {
                 Text(model.displayName(for: track)).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Text(track.codec + (track.detail.isEmpty ? "" : " · " + track.detail)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(track.codec + (track.detail.isEmpty ? "" : " · " + track.detail)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    if let badge = track.hdrBadge { Text(badge.rawValue).font(.system(size: 9, weight: .semibold)).padding(.horizontal, 5).padding(.vertical, 2).glassEffect(.identity, in: Capsule()) }
+                    if track.delayMs != 0 { Text("\(track.delayMs > 0 ? "+" : "")\(track.delayMs) ms").font(.system(size: 9)).foregroundStyle(.secondary) }
+                }
             }
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 5) {
@@ -245,6 +261,16 @@ struct ContentView: View {
                 Toggle("Default", isOn: model.boolBinding(track.id, \.isDefault)).font(.system(size: 12)).toggleStyle(.switch).controlSize(.small)
                 if track.kind == "subtitles" {
                     Toggle("Forced", isOn: model.boolBinding(track.id, \.isForced)).font(.system(size: 12)).toggleStyle(.switch).controlSize(.small)
+                }
+                if track.kind == "audio" || track.kind == "subtitles" {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Delay (ms)").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Stepper(value: model.intBinding(track.id, \.delayMs), in: -12_000...12_000, step: 50) { Text("\(track.delayMs)").font(.system(size: 12, design: .monospaced)).frame(width: 64, alignment: .trailing) }
+                        }
+                        Text("Drift fix (e.g. 25/23.976)").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        TextField("Optional", text: model.optionalIntBinding(track.id, numerator: \.syncDriftNumerator, denominator: \.syncDriftDenominator)).textFieldStyle(.roundedBorder)
+                    }
                 }
             }
             Spacer(minLength: 0)

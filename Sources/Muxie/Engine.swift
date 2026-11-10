@@ -24,15 +24,25 @@ struct Probe: Decodable {
     }
     var container: Container; var tracks: [Track]; var errors: [String]?
 }
-struct MediaTrack: Identifiable, Equatable, Sendable {
+struct MediaTrack: Identifiable, Equatable, Sendable, Codable {
     var id = UUID(); var sourceID: UUID; var trackID: Int; var kind: String; var codec: String
     var name: String; var language: String; var isDefault: Bool; var isForced: Bool; var enabled: Bool
     var detail: String
+    var audioChannels: Int? = nil
+    var isAAC: Bool? = nil
+    var pixelHeight: Int? = nil
+    var codecPrivateHex: String? = nil
+    var colorTransfer: Int? = nil
+    var hdrBadge: HDRBadge? = nil
+    var delayMs: Int = 0
+    var syncDriftNumerator: Int?
+    var syncDriftDenominator: Int?
+    var syncBadge: String? { delayMs == 0 && syncDriftNumerator == nil ? nil : "Sync" }
     var symbol: String { kind == "video" ? "film" : kind == "audio" ? "waveform" : "captions.bubble" }
     var kindName: String { kind == "video" ? "Video" : kind == "audio" ? "Audio" : "Subtitle" }
     var filterName: String { kind == "subtitles" ? "Subtitles" : kindName }
 }
-struct MediaSource: Identifiable, Equatable, Sendable {
+struct MediaSource: Identifiable, Equatable, Sendable, Codable {
     var id: UUID; var url: URL; var originURL: URL? = nil; var container: String; var byteSize: Int64
     /// Further files of the same source, appended after `url` (the extra clips of a Blu-ray main title).
     var appendedParts: [URL] = []
@@ -42,23 +52,83 @@ struct ExportPlan: Sendable {
     var sources: [MediaSource]; var tracks: [MediaTrack]
     var orderedTracks: [MediaTrack] { sources.flatMap { source in tracks.filter { $0.sourceID == source.id && $0.enabled } } }
     func arguments(output: URL) -> [String] {
+        buildArguments(output: output.path, includeChaptersFromPrimaryWhenEmpty: true)
+    }
+
+    func audioNeedsEncode(_ track: MediaTrack) -> Bool {
+        guard track.kind == "audio" else { return false }
+        let channels = track.audioChannels ?? 2
+        let aac = track.isAAC ?? track.codec.uppercased().contains("AAC")
+        return !CompressSettings.audioIsCopied(channels: channels, isAAC: aac)
+    }
+
+    /// Remux input for HandBrake: checked video and audio that must be re-encoded; no subtitles.
+    func handbrakeInputArguments(output: URL) -> [String] {
         var args = ["--ui-language", "en_US", "--gui-mode", "-o", output.path]
-        var order: [String] = []; var fileIndex = 0
+        var order: [String] = []
+        var fileIndex = 0
         for source in sources {
-            let keep = tracks.filter { $0.sourceID == source.id && $0.enabled }
-            guard !keep.isEmpty || source.id == sources.first?.id else { continue }
-            for (kind, select, none) in [("video", "--video-tracks", "--no-video"), ("audio", "--audio-tracks", "--no-audio"), ("subtitles", "--subtitle-tracks", "--no-subtitles")] {
+            let keep = tracks.filter { $0.sourceID == source.id && $0.enabled && ($0.kind == "video" || ($0.kind == "audio" && audioNeedsEncode($0))) }
+            guard !keep.isEmpty else { continue }
+            for (kind, select, none) in [("video", "--video-tracks", "--no-video"), ("audio", "--audio-tracks", "--no-audio")] {
                 let ids = keep.filter { $0.kind == kind }.map { String($0.trackID) }
                 if ids.isEmpty { args.append(none) } else { args += [select, ids.joined(separator: ",")] }
             }
-            // Preserve primary metadata even when all of its tracks are excluded.
-            // Keep subtitle font attachments from additional Matroska sources.
+            args.append("--no-subtitles")
+            args += ["--no-chapters", "--no-global-tags", "--no-attachments"]
+            for track in keep { order.append("\(fileIndex):\(track.trackID)") }
+            args.append(source.url.path)
+            for part in source.appendedParts { args += ["+", part.path] }
+            fileIndex += 1
+        }
+        if !order.isEmpty { args += ["--track-order", order.joined(separator: ",")] }
+        return args
+    }
+
+    /// Merge HandBrake output with untouched tracks from the original sources.
+    func compressFinalizeArguments(output: URL, encodedURL: URL, encodedProbe: Probe) -> [String] {
+        var args = ["--ui-language", "en_US", "--gui-mode", "-o", output.path]
+        var order: [String] = []
+        var fileIndex = 0
+        let encodedVideos = encodedProbe.tracks.filter { $0.type == "video" }
+        let encodedAudios = encodedProbe.tracks.filter { $0.type == "audio" }
+        args += encodedVideos.isEmpty ? ["--no-video"] : ["--video-tracks", encodedVideos.map { String($0.id) }.joined(separator: ",")]
+        args += encodedAudios.isEmpty ? ["--no-audio"] : ["--audio-tracks", encodedAudios.map { String($0.id) }.joined(separator: ",")]
+        args.append("--no-subtitles")
+        if let video = orderedTracks.first(where: { $0.kind == "video" }), let enc = encodedVideos.first {
+            appendTrackMetadata(&args, track: video, trackID: enc.id)
+            order.append("\(fileIndex):\(enc.id)")
+        }
+        var encAudioIndex = 0
+        for track in orderedTracks where track.kind == "audio" && audioNeedsEncode(track) {
+            guard encAudioIndex < encodedAudios.count else { break }
+            let enc = encodedAudios[encAudioIndex]
+            appendTrackMetadata(&args, track: track, trackID: enc.id)
+            order.append("\(fileIndex):\(enc.id)")
+            encAudioIndex += 1
+        }
+        args.append(encodedURL.path)
+        fileIndex += 1
+
+        for source in sources {
+            let supplemental = tracks.filter {
+                $0.sourceID == source.id && $0.enabled && ($0.kind == "subtitles" || ($0.kind == "audio" && !audioNeedsEncode($0)))
+            }
+            let isPrimary = source.id == sources.first?.id
+            let primaryVideoElsewhere = isPrimary && orderedTracks.contains { $0.sourceID == source.id && $0.kind == "video" && $0.enabled }
+            guard !supplemental.isEmpty || (isPrimary && primaryVideoElsewhere) else { continue }
+            args.append("--no-video")
+            let audioIDs = supplemental.filter { $0.kind == "audio" }.map { String($0.trackID) }
+            if audioIDs.isEmpty { args.append("--no-audio") } else { args += ["--audio-tracks", audioIDs.joined(separator: ",")] }
+            let subIDs = supplemental.filter { $0.kind == "subtitles" }.map { String($0.trackID) }
+            if subIDs.isEmpty { args.append("--no-subtitles") } else { args += ["--subtitle-tracks", subIDs.joined(separator: ",")] }
             if source.id != sources.first?.id {
                 args += ["--no-chapters", "--no-global-tags"]
-                if !keep.contains(where: { $0.kind == "subtitles" }) { args.append("--no-attachments") }
+                if subIDs.isEmpty { args.append("--no-attachments") }
             }
-            for track in keep {
-                args += ["--track-name", "\(track.trackID):\(track.name)", "--language", "\(track.trackID):\(track.language.isEmpty ? "und" : track.language)", "--default-track-flag", "\(track.trackID):\(track.isDefault ? "yes" : "no")", "--forced-display-flag", "\(track.trackID):\(track.isForced ? "yes" : "no")"]
+            for track in supplemental {
+                appendTrackMetadata(&args, track: track, trackID: track.trackID)
+                appendSync(&args, track: track)
                 order.append("\(fileIndex):\(track.trackID)")
             }
             args.append(source.url.path)
@@ -67,6 +137,45 @@ struct ExportPlan: Sendable {
         }
         args += ["--track-order", order.joined(separator: ",")]
         return args
+    }
+
+    private func buildArguments(output: String, includeChaptersFromPrimaryWhenEmpty: Bool) -> [String] {
+        var args = ["--ui-language", "en_US", "--gui-mode", "-o", output]
+        var order: [String] = []
+        var fileIndex = 0
+        for source in sources {
+            let keep = tracks.filter { $0.sourceID == source.id && $0.enabled }
+            guard !keep.isEmpty || (includeChaptersFromPrimaryWhenEmpty && source.id == sources.first?.id) else { continue }
+            for (kind, select, none) in [("video", "--video-tracks", "--no-video"), ("audio", "--audio-tracks", "--no-audio"), ("subtitles", "--subtitle-tracks", "--no-subtitles")] {
+                let ids = keep.filter { $0.kind == kind }.map { String($0.trackID) }
+                if ids.isEmpty { args.append(none) } else { args += [select, ids.joined(separator: ",")] }
+            }
+            if source.id != sources.first?.id {
+                args += ["--no-chapters", "--no-global-tags"]
+                if !keep.contains(where: { $0.kind == "subtitles" }) { args.append("--no-attachments") }
+            }
+            for track in keep {
+                appendTrackMetadata(&args, track: track, trackID: track.trackID)
+                appendSync(&args, track: track)
+                order.append("\(fileIndex):\(track.trackID)")
+            }
+            args.append(source.url.path)
+            for part in source.appendedParts { args += ["+", part.path] }
+            fileIndex += 1
+        }
+        args += ["--track-order", order.joined(separator: ",")]
+        return args
+    }
+
+    private func appendTrackMetadata(_ args: inout [String], track: MediaTrack, trackID: Int) {
+        args += ["--track-name", "\(trackID):\(track.name)", "--language", "\(trackID):\(track.language.isEmpty ? "und" : track.language)", "--default-track-flag", "\(trackID):\(track.isDefault ? "yes" : "no")", "--forced-display-flag", "\(trackID):\(track.isForced ? "yes" : "no")"]
+    }
+
+    private func appendSync(_ args: inout [String], track: MediaTrack) {
+        guard track.delayMs != 0 || (track.syncDriftNumerator != nil && track.syncDriftDenominator != nil) else { return }
+        var token = "\(track.trackID):\(track.delayMs)"
+        if let num = track.syncDriftNumerator, let den = track.syncDriftDenominator, den != 0 { token += ",\(num)/\(den)" }
+        args += ["--sync", token]
     }
 }
 final class RunningJob: @unchecked Sendable {
@@ -92,7 +201,7 @@ final class RunningJob: @unchecked Sendable {
         try action(); committed = true
     }
     var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return wasCancelled }
-    func run(engine: URL, arguments: [String], progress: @escaping @Sendable (Double) -> Void = { _ in }) throws -> (Int32, Data) {
+    func run(engine: URL, arguments: [String], progress: @escaping @Sendable (JobProgress) -> Void = { _ in }) throws -> (Int32, Data) {
         let p = Process(); p.executableURL = engine; p.arguments = arguments
         let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe; p.standardInput = FileHandle.nullDevice
         var environment = ProcessInfo.processInfo.environment; environment["LC_ALL"] = "en_US.UTF-8"; p.environment = environment
@@ -100,6 +209,7 @@ final class RunningJob: @unchecked Sendable {
         lock.lock()
         if wasCancelled { lock.unlock(); throw CancellationError() }
         do { try p.run(); process = p; if isPaused { kill(p.processIdentifier, SIGSTOP) }; lock.unlock() } catch { lock.unlock(); throw error }
+        let mkvMergeStarted = Date()
         var all = Data(); var pending = ""
         while true {
             let data = pipe.fileHandleForReading.availableData
@@ -107,10 +217,19 @@ final class RunningJob: @unchecked Sendable {
             all.append(data); pending += String(decoding: data, as: UTF8.self)
             let lines = pending.components(separatedBy: .newlines); pending = lines.last ?? ""
             for line in lines.dropLast() {
-                if line.hasPrefix("#GUI#progress "), let n = Double(line.dropFirst(14).trimmingCharacters(in: CharacterSet(charactersIn: " %\r\n"))) { progress(min(1, max(0, n / 100))) }
+                if line.hasPrefix("#GUI#progress "), let n = Double(line.dropFirst(14).trimmingCharacters(in: CharacterSet(charactersIn: " %\r\n"))) {
+                    let value = min(1, max(0, n / 100))
+                    var update = JobProgress.fraction(value)
+                    update.phase = .mux
+                    if value >= 0.02 {
+                        let elapsed = Date().timeIntervalSince(mkvMergeStarted)
+                        update.etaSeconds = elapsed * (1 - value) / value
+                    }
+                    progress(update)
+                }
             }
         }
-        if pending.hasPrefix("#GUI#progress "), let n = Double(pending.dropFirst(14).trimmingCharacters(in: CharacterSet(charactersIn: " %\r\n"))) { progress(min(1, max(0, n / 100))) }
+        if pending.hasPrefix("#GUI#progress "), let n = Double(pending.dropFirst(14).trimmingCharacters(in: CharacterSet(charactersIn: " %\r\n"))) { progress(JobProgress.fraction(min(1, max(0, n / 100)))) }
         p.waitUntilExit(); lock.lock(); process = nil; let cancelled = wasCancelled; lock.unlock()
         if cancelled { throw CancellationError() }; return (p.terminationStatus, all)
     }
@@ -131,7 +250,7 @@ enum Engine {
         guard probe.container.recognized && probe.container.supported else { throw MuxError.message("Unsupported file: \(url.lastPathComponent)") }
         return probe
     }
-    static func export(plan: ExportPlan, output: URL, engine: URL, job: RunningJob, progress: @escaping @Sendable (Double) -> Void) throws -> String? {
+    static func export(plan: ExportPlan, output: URL, engine: URL, job: RunningJob, progress: @escaping @Sendable (JobProgress) -> Void) throws -> String? {
         let fm = FileManager.default
         let target = output.standardizedFileURL.resolvingSymlinksInPath()
         guard !plan.sources.contains(where: { $0.url.standardizedFileURL.resolvingSymlinksInPath() == target }) else { throw MuxError.message("The output cannot be a source file. Choose a different name.") }
