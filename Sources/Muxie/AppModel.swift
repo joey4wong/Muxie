@@ -10,25 +10,33 @@ import UniformTypeIdentifiers
     @Published var tracks: [MediaTrack] = []
     @Published var selected: UUID?
     @Published var importing = false
-    @Published var exporting = false
     @Published var progress: Double = 0
     @Published var completed: URL?
     @Published var warning: String?
     @Published var error: String?
     @Published var showError = false
     @Published var showAbout = false
+    @Published var showQueue = false
     @Published var filter = "All"
     @Published var trackPage = 0
     @Published var workspaceScreenHeight: CGFloat = 900
     @Published var exportMode: ExportMode = .mux
     @Published var compressEligible = true
+    @Published var queueJobs: [QueueJob] = []
     var job: RunningJob?
     private var isoMounts: [UUID: BluRayMount] = [:]
+    private var queueISOMounts: [UUID: BluRayMount] = [:]
+    private var queueProcessor: Task<Void, Never>?
+    private var queueSleeping = false
     var active: MediaTrack? { tracks.first { $0.id == selected } }
     var enabled: [MediaTrack] { tracks.filter(\.enabled) }
-    var busy: Bool { importing || exporting }
+    var busy: Bool { importing || queueHasPendingExport }
+    var queueHasPendingExport: Bool { queueJobs.contains { $0.isPending } }
+    var queueBadgeCount: Int { queueJobs.filter { $0.state == .queued || $0.isRunning }.count }
+    var runningQueueJob: QueueJob? { queueJobs.first { $0.isRunning } }
+    var queueActivityActive: Bool { runningQueueJob != nil }
     var canExport: Bool {
-        guard !busy, Engine.executable != nil, enabled.contains(where: { $0.kind == "video" }) else { return false }
+        guard !importing, Engine.executable != nil, enabled.contains(where: { $0.kind == "video" }) else { return false }
         if exportMode == .compress { return compressEligible && Engine.handbrakeExecutable != nil }
         return true
     }
@@ -53,7 +61,7 @@ import UniformTypeIdentifiers
     }
     func fail(_ text: String) { error = text; showError = true }
     func openFiles(additional: Bool = false) {
-        guard !busy else { return }
+        guard !importing else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = additional
         panel.title = additional ? "Add Tracks" : "Open Video"
         panel.prompt = additional ? "Add" : "Open"
@@ -62,7 +70,7 @@ import UniformTypeIdentifiers
         panel.begin { [weak self] result in if result == .OK { Task { @MainActor in await self?.importFiles(panel.urls) } } }
     }
     func importFiles(_ urls: [URL]) async {
-        guard !busy, !urls.isEmpty else { return }
+        guard !importing, !urls.isEmpty else { return }
         guard let engine = Engine.executable else { fail("The bundled mkvmerge is missing. Reinstall Muxie."); return }
         importing = true; completed = nil; warning = nil
         var failures: [String] = []
@@ -150,22 +158,30 @@ import UniformTypeIdentifiers
         })
     }
     func removeSource(_ source: MediaSource) {
-        guard !busy, source.id != sources.first?.id else { return }
+        guard !importing, source.id != sources.first?.id else { return }
         tracks.removeAll { $0.sourceID == source.id }; sources.removeAll { $0.id == source.id }
         if let mount = isoMounts.removeValue(forKey: source.id) { BluRayISO.detach(mount) }
         if !tracks.contains(where: { $0.id == selected }) { selected = tracks.first?.id }; completed = nil
     }
     func reset() {
-        guard !busy else { return }
+        guard !importing else { return }
         detachAllISO()
         sources = []; tracks = []; selected = nil; completed = nil; warning = nil; filter = "All"; trackPage = 0
         exportMode = .mux; compressEligible = true
     }
     func recoverStaleISOMounts() { BluRayISO.recoverStaleMounts(); isoMounts = [:] }
-    func prepareForQuit() { detachAllISO() }
+    func prepareForQuit() {
+        queueJobs.removeAll()
+        detachAllISO()
+        detachQueueISO()
+    }
     private func detachAllISO() {
         for mount in isoMounts.values { BluRayISO.detach(mount) }
         isoMounts = [:]
+    }
+    private func detachQueueISO() {
+        for mount in queueISOMounts.values { BluRayISO.detach(mount) }
+        queueISOMounts = [:]
     }
     private func ensureISOMounted() async throws {
         for index in sources.indices {
@@ -176,12 +192,20 @@ import UniformTypeIdentifiers
             sources[index].byteSize = mount.inputBytes
         }
     }
+    private func ensureQueueISOMounted(sources: inout [MediaSource]) async throws {
+        for index in sources.indices {
+            guard let iso = sources[index].originURL, queueISOMounts[sources[index].id] == nil else { continue }
+            let sourceID = sources[index].id
+            let mount = try await Task.detached(priority: .userInitiated) { try BluRayISO.attach(iso: iso) }.value
+            queueISOMounts[sourceID] = mount
+            sources[index].url = mount.mediaURL
+            sources[index].byteSize = mount.inputBytes
+        }
+    }
     func exportPanel() {
         guard canExport, let source = sources.first else { return }
         let panel = NSSavePanel(); panel.title = "Export MKV"; panel.prompt = "Export"; panel.canCreateDirectories = true
         panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
-        // Default to the original name. Only when the source is itself an .mkv in the same folder (the output
-        // cannot overwrite its own source) keep a suffix so the default is still exportable.
         let baseName = source.displayURL.deletingPathExtension().lastPathComponent
         if exportMode == .compress {
             panel.nameFieldStringValue = baseName + "-compressed.mkv"
@@ -193,15 +217,145 @@ import UniformTypeIdentifiers
         panel.directoryURL = source.displayURL.deletingLastPathComponent()
         panel.begin { [weak self] result in
             guard result == .OK, let url = panel.url else { return }
-            Task { @MainActor in await self?.export(to: url) }
+            Task { @MainActor in self?.enqueueExport(to: url) }
         }
     }
+    func enqueueExport(to output: URL) {
+        let target = output.standardizedFileURL.resolvingSymlinksInPath()
+        let taken = queueJobs.filter(\.isPending).map { $0.output.standardizedFileURL.resolvingSymlinksInPath() }
+        if taken.contains(target) {
+            fail("Another queued export already uses this output path.")
+            return
+        }
+        queueJobs.append(QueueJob.snapshot(sources: sources, tracks: tracks, mode: exportMode, output: output))
+        reset()
+        startQueueProcessorIfNeeded()
+    }
+    private func startQueueProcessorIfNeeded() {
+        guard queueProcessor == nil else { return }
+        ExportActivity.shared.active = queueHasPendingExport
+        queueProcessor = Task { @MainActor in
+            defer { queueProcessor = nil }
+            while let index = queueJobs.firstIndex(where: { $0.state == .queued }) {
+                await runQueueJob(at: index)
+            }
+            if queueSleeping {
+                IdleSleepActivity.end()
+                queueSleeping = false
+            }
+            ExportActivity.shared.active = false
+            ExportActivity.shared.cancel = nil
+            if ExportActivity.shared.terminating { NSApp.reply(toApplicationShouldTerminate: true) }
+        }
+    }
+    private func runQueueJob(at index: Int) async {
+        if !queueSleeping {
+            IdleSleepActivity.begin()
+            queueSleeping = true
+        }
+        queueJobs[index].state = .running(progress: 0)
+        progress = 0
+        var workingSources = queueJobs[index].sources
+        let mode = queueJobs[index].mode
+        let output = queueJobs[index].output
+        let planTracks = queueJobs[index].tracks
+        let running = RunningJob()
+        job = running
+        ExportActivity.shared.active = true
+        ExportActivity.shared.cancel = { running.cancel() }
+        defer {
+            detachQueueISO()
+            job = nil
+        }
+        do {
+            try await ensureQueueISOMounted(sources: &workingSources)
+        } catch {
+            queueJobs[index].state = .failed(error.localizedDescription)
+            progress = 0
+            return
+        }
+        let plan = ExportPlan(sources: workingSources, tracks: planTracks)
+        guard let engine = Engine.executable else {
+            queueJobs[index].state = .failed("The bundled mkvmerge is missing. Reinstall Muxie.")
+            return
+        }
+        if mode == .compress, Engine.handbrakeExecutable == nil {
+            queueJobs[index].state = .failed("The bundled HandBrakeCLI is missing. Reinstall Muxie.")
+            return
+        }
+        do {
+            try ExportSpace.verifySpace(mode: mode, plan: plan, destination: output.deletingLastPathComponent())
+        } catch let err as MuxError {
+            queueJobs[index].state = .failed(err.localizedDescription)
+            return
+        } catch {
+            queueJobs[index].state = .failed(error.localizedDescription)
+            return
+        }
+        do {
+            let handbrake = Engine.handbrakeExecutable
+            let jobID = queueJobs[index].id
+            let warnings = try await Task.detached(priority: .userInitiated) { [running] in
+                if mode == .compress, let handbrake {
+                    return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running) { value in
+                        Task { @MainActor in self.updateQueueProgress(jobID: jobID, value: value) }
+                    }
+                }
+                return try Engine.export(plan: plan, output: output, engine: engine, job: running) { value in
+                    Task { @MainActor in self.updateQueueProgress(jobID: jobID, value: value) }
+                }
+            }.value
+            queueJobs[index].warning = warnings
+            queueJobs[index].state = .done
+            progress = 1
+        } catch is CancellationError {
+            queueJobs[index].state = .cancelled
+            progress = 0
+        } catch {
+            queueJobs[index].state = .failed(error.localizedDescription)
+            progress = 0
+        }
+    }
+    private func updateQueueProgress(jobID: UUID, value: Double) {
+        guard let index = queueJobs.firstIndex(where: { $0.id == jobID }) else { return }
+        queueJobs[index].state = .running(progress: value)
+        progress = value
+    }
+    func cancelQueueJob(_ id: UUID) {
+        guard let index = queueJobs.firstIndex(where: { $0.id == id }) else { return }
+        switch queueJobs[index].state {
+        case .running: job?.cancel()
+        case .queued: queueJobs[index].state = .cancelled
+        default: break
+        }
+    }
+    func removeQueueJob(_ id: UUID) {
+        guard let index = queueJobs.firstIndex(where: { $0.id == id }) else { return }
+        switch queueJobs[index].state {
+        case .running: job?.cancel()
+        case .queued: queueJobs.remove(at: index)
+        case .done, .failed, .cancelled: queueJobs.remove(at: index)
+        }
+    }
+    func clearFinishedQueueJob(_ id: UUID) {
+        guard let index = queueJobs.firstIndex(where: { $0.id == id }) else { return }
+        switch queueJobs[index].state {
+        case .done, .failed, .cancelled: queueJobs.remove(at: index)
+        default: break
+        }
+    }
+    func revealQueueOutput(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    func copyQueueFailure(_ id: UUID) {
+        guard let job = queueJobs.first(where: { $0.id == id }), case .failed(let text) = job.state else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+    /// Direct export for integration tests (bypasses the queue UI).
     func export(to output: URL) async {
-        guard canExport, let engine = Engine.executable else { return }
-        exporting = true; progress = 0; completed = nil; warning = nil
+        guard canExport || (!sources.isEmpty && Engine.executable != nil), let engine = Engine.executable else { return }
+        progress = 0; completed = nil; warning = nil
         IdleSleepActivity.begin()
         do { try await ensureISOMounted() } catch {
-            exporting = false
             IdleSleepActivity.end()
             fail(error.localizedDescription)
             return
@@ -212,7 +366,6 @@ import UniformTypeIdentifiers
             detachAllISO()
             IdleSleepActivity.end()
             ExportActivity.shared.active = false; ExportActivity.shared.cancel = nil
-            if ExportActivity.shared.terminating { NSApp.reply(toApplicationShouldTerminate: true) }
         }
         do {
             let mode = exportMode
@@ -230,9 +383,15 @@ import UniformTypeIdentifiers
             progress = 1; completed = output; warning = warnings
         } catch is CancellationError { progress = 0 }
         catch { fail(error.localizedDescription) }
-        exporting = false; job = nil
+        job = nil
     }
     func reveal() { if let url = completed { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
+    func waitForQueueIdle() async {
+        while queueHasPendingExport || queueProcessor != nil {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
 }
 
 final class ExportActivity { static let shared = ExportActivity(); var active = false; var terminating = false; var cancel: (() -> Void)? }

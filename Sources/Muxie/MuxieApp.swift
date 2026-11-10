@@ -28,12 +28,12 @@ import AppKit
             CommandGroup(replacing: .appInfo) {
                 Button("About Muxie") { model.showAbout = true }
                 Button("Check for Updates…") { updater.checkForUpdates() }
-                    .disabled(!updater.canCheck || model.busy)
+                    .disabled(!updater.canCheck || model.busy || model.queueHasPendingExport)
             }
             CommandGroup(replacing: .newItem) {
-                Button("New Project") { model.reset() }.keyboardShortcut("n").disabled(model.busy || model.sources.isEmpty)
-                Button("Open Video…") { model.openFiles() }.keyboardShortcut("o").disabled(model.busy || !model.sources.isEmpty)
-                Button("Add Tracks…") { model.openFiles(additional: true) }.keyboardShortcut("o", modifiers: [.command, .shift]).disabled(model.busy || model.sources.isEmpty)
+                Button("New Project") { model.reset() }.keyboardShortcut("n").disabled(model.importing || model.sources.isEmpty)
+                Button("Open Video…") { model.openFiles() }.keyboardShortcut("o").disabled(model.importing || !model.sources.isEmpty)
+                Button("Add Tracks…") { model.openFiles(additional: true) }.keyboardShortcut("o", modifiers: [.command, .shift]).disabled(model.importing || model.sources.isEmpty)
                 Divider()
                 Button("Export…") { model.exportPanel() }.keyboardShortcut("e").disabled(!model.canExport)
             }
@@ -51,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if ExportActivity.shared.active {
-            let alert = NSAlert(); alert.messageText = "Export in progress"; alert.informativeText = "Quit and cancel the export?"; alert.addButton(withTitle: "Continue Export"); alert.addButton(withTitle: "Cancel and Quit")
+            let alert = NSAlert(); alert.messageText = "Exports in progress"; alert.informativeText = "Quit and cancel all queued exports?"; alert.addButton(withTitle: "Continue Exports"); alert.addButton(withTitle: "Cancel and Quit")
             if alert.runModal() == .alertFirstButtonReturn { return .terminateCancel }
             ExportActivity.shared.cancel?(); ExportActivity.shared.terminating = true
             return .terminateLater

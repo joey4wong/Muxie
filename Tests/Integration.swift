@@ -42,9 +42,9 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         for count in 2...6 {
             sizing.tracks = (0..<count).map { index in var track = model.tracks[index % 2]; track.id = UUID(); return track }
             let before = sizing.minimumContentHeight
-            sizing.completed = run.appendingPathComponent("layout-only.mkv"); sizing.exporting = true
+            sizing.queueJobs = [QueueJob(id: UUID(), sources: sizing.sources, tracks: [], mode: .mux, output: run.appendingPathComponent("layout-only.mkv"), state: .running(progress: 0.5), warning: nil)]
             sizeChecks = sizeChecks && sizing.pagedTracks.count == count && !sizing.reservesPagination && before == sizing.minimumContentHeight && before == WorkspaceLayout.minimumContentHeight(rows: count)
-            sizing.completed = nil; sizing.exporting = false
+            sizing.queueJobs = []
         }
         try check(sizeChecks, "Two to six tracks fit without paging; export status never takes row space")
         sizing.tracks = (0..<24).map { index in var track = model.tracks[index % 2]; track.id = UUID(); return track }
@@ -229,6 +229,72 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(dualAudios.count == 2 && dualAudios[0].properties.audio_channels == 2 && dualAudios[1].properties.audio_channels == 6,
             "Compress dual audio: AAC 2-channel and 6-channel tracks")
         try check(dualAudios.allSatisfy { $0.codec.uppercased().contains("AAC") }, "Compress dual audio: both tracks are AAC")
+        func enqueueEnabled(_ model: AppModel, output: URL) {
+            for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
+            model.enqueueExport(to: output)
+        }
+        let queueA = AppModel()
+        let queueOut1 = run.appendingPathComponent("queue-mux-1.mkv")
+        let queueOut2 = run.appendingPathComponent("queue-mux-2.mkv")
+        await queueA.importFiles([video])
+        enqueueEnabled(queueA, output: queueOut1)
+        await queueA.importFiles([video])
+        enqueueEnabled(queueA, output: queueOut2)
+        await queueA.waitForQueueIdle()
+        try check(fm.fileExists(atPath: queueOut1.path) && fm.fileExists(atPath: queueOut2.path), "Two queued Mux jobs finish in order with valid outputs")
+        try check((try Data(contentsOf: video)) == original, "Inputs unchanged after queued mux exports")
+        let modeQueue = AppModel()
+        await modeQueue.importFiles([video, fixture.appendingPathComponent("English.srt")])
+        for track in modeQueue.tracks { modeQueue.boolBinding(track.id, \.enabled).wrappedValue = true }
+        modeQueue.exportMode = .compress
+        modeQueue.enqueueExport(to: run.appendingPathComponent("queue-compress.mkv"))
+        await modeQueue.importFiles([video])
+        enqueueEnabled(modeQueue, output: run.appendingPathComponent("queue-after-compress.mkv"))
+        await modeQueue.waitForQueueIdle()
+        let compressedQueued = try Engine.identify(run.appendingPathComponent("queue-compress.mkv"), engine: engine)
+        try check(compressedQueued.tracks.first { $0.type == "video" }!.codec.uppercased().contains("HEVC"), "Queued compress job uses Compress mode")
+        let muxQueued = try Engine.identify(run.appendingPathComponent("queue-after-compress.mkv"), engine: engine)
+        try check(muxQueued.tracks.first { $0.type == "video" }!.codec.uppercased().contains("AVC"), "Following queued job uses Mux mode")
+        let failPath = run.appendingPathComponent("queue-fail.mkv")
+        try Data("existing".utf8).write(to: failPath)
+        let failQueue = AppModel()
+        await failQueue.importFiles([video])
+        enqueueEnabled(failQueue, output: failPath)
+        await failQueue.importFiles([video])
+        enqueueEnabled(failQueue, output: run.appendingPathComponent("queue-continue.mkv"))
+        await failQueue.waitForQueueIdle()
+        try check(failQueue.queueJobs.contains { if case .failed = $0.state { return true }; return false } && fm.fileExists(atPath: run.appendingPathComponent("queue-continue.mkv").path), "A failed queued job does not block the next job")
+        let snap = AppModel()
+        await snap.importFiles([video, fixture.appendingPathComponent("国语音轨.m4a")])
+        for track in snap.tracks { snap.boolBinding(track.id, \.enabled).wrappedValue = true }
+        let audioTrack = snap.tracks.first { $0.kind == "audio" }!
+        snap.binding(audioTrack.id, \.name).wrappedValue = "Queued Snapshot"
+        snap.enqueueExport(to: run.appendingPathComponent("queue-snap-1.mkv"))
+        await snap.importFiles([video, fixture.appendingPathComponent("国语音轨.m4a")])
+        for track in snap.tracks { snap.boolBinding(track.id, \.enabled).wrappedValue = true }
+        let audioAgain = snap.tracks.first { $0.kind == "audio" }!
+        snap.binding(audioAgain.id, \.name).wrappedValue = "After Enqueue Edit"
+        snap.enqueueExport(to: run.appendingPathComponent("queue-snap-2.mkv"))
+        await snap.waitForQueueIdle()
+        let snap1 = try Engine.identify(run.appendingPathComponent("queue-snap-1.mkv"), engine: engine)
+        try check(snap1.tracks.first { $0.type == "audio" }?.properties.track_name == "Queued Snapshot", "Queued job keeps track plan from enqueue time")
+        let dup = AppModel()
+        await dup.importFiles([video])
+        let dupPath = run.appendingPathComponent("queue-dup.mkv")
+        enqueueEnabled(dup, output: dupPath)
+        await dup.importFiles([video])
+        enqueueEnabled(dup, output: dupPath)
+        try check(dup.showError && dup.queueJobs.filter { $0.output == dupPath && $0.isPending }.count <= 1, "Duplicate queued output path is refused")
+        let removeQueued = AppModel()
+        await removeQueued.importFiles([video])
+        enqueueEnabled(removeQueued, output: run.appendingPathComponent("queue-remove-a.mkv"))
+        await removeQueued.importFiles([video])
+        enqueueEnabled(removeQueued, output: run.appendingPathComponent("queue-remove-b.mkv"))
+        if let queued = removeQueued.queueJobs.first(where: { $0.output.lastPathComponent == "queue-remove-b.mkv" && $0.state == .queued }) {
+            removeQueued.removeQueueJob(queued.id)
+        }
+        await removeQueued.waitForQueueIdle()
+        try check(fm.fileExists(atPath: run.appendingPathComponent("queue-remove-a.mkv").path) && !fm.fileExists(atPath: run.appendingPathComponent("queue-remove-b.mkv").path), "Removing a queued job prevents it from running")
         let bdmvRoot = fixture.appendingPathComponent("bdmv-title-fixture")
         let playlistDir = bdmvRoot.appendingPathComponent("BDMV/PLAYLIST", isDirectory: true)
         let streamDir = bdmvRoot.appendingPathComponent("BDMV/STREAM", isDirectory: true)
