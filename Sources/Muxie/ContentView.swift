@@ -56,6 +56,7 @@ struct ContentView: View {
                             }
                         }
                         .pickerStyle(.segmented).labelsHidden()
+                        .tint(.gray)
                         .frame(maxWidth: 240)
                         .disabled(model.busy)
                         if model.exportMode == .compress && model.compressEligible {
@@ -64,8 +65,8 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Button("Export") { model.exportPanel() }
-                            .font(.system(size: 13, weight: .semibold))
-                            .padding(.horizontal, 32).padding(.vertical, 7)
+                            .font(.system(size: 15, weight: .semibold))
+                            .padding(.horizontal, 40).padding(.vertical, 9)
                             .buttonStyle(NeutralGlassButtonStyle(compact: false))
                             .disabled(!model.canExport)
                     }
