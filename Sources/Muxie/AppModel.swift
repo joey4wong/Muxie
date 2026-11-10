@@ -239,7 +239,9 @@ import UniformTypeIdentifiers
         guard !title.isEmpty else { return nil }
         let height = tracks.first(where: { $0.kind == "video" && $0.enabled })?.detail.split(separator: "×").last.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) } ?? 1080
         let res = (exportMode == .compress && height > 1080) ? "4K" : "1080p"
-        return "\(title).\(words[yearIndex]).\(res).BluRay.x265.10bit.AAC-Joey.mkv"
+        // Hardware encoding is named HEVC; x265 software (and sources that are already HEVC, which are not re-encoded) is named x265.
+        let codec = (exportMode == .compress && CompressEncoder.current == .hardware) ? "HEVC" : "x265"
+        return "\(title).\(words[yearIndex]).\(res).BluRay.\(codec).10bit.AAC-Joey.mkv"
     }
     func enqueueExport(to output: URL) {
         let target = output.standardizedFileURL.resolvingSymlinksInPath()
