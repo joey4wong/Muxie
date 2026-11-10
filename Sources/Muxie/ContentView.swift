@@ -50,14 +50,21 @@ struct ContentView: View {
                         }
                     }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
                     VStack(spacing: 8) {
-                        Picker("Export", selection: $model.exportMode) {
-                            ForEach(model.compressEligible ? ExportMode.allCases : [.remux]) { mode in
-                                Text(mode == .remux ? "Remux" : "Compress").tag(mode)
+                        GlassEffectContainer(spacing: 8) {
+                            HStack(spacing: 8) {
+                                ForEach(model.compressEligible ? ExportMode.allCases : [.remux]) { mode in
+                                    let selected = model.exportMode == mode
+                                    Button { model.exportMode = mode } label: {
+                                        Text(mode == .remux ? "Remux" : "Compress")
+                                            .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                                            .foregroundStyle(.primary)
+                                            .padding(.horizontal, 18).padding(.vertical, 6)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .glassEffect(selected ? .regular.tint(accent.opacity(0.35)).interactive() : .regular.interactive(), in: Capsule())
+                                }
                             }
                         }
-                        .pickerStyle(.segmented).labelsHidden()
-                        .tint(.gray)
-                        .frame(maxWidth: 240)
                         .disabled(model.busy)
                         Button("Export") { model.exportPanel() }
                             .font(.system(size: 15, weight: .semibold))
