@@ -98,7 +98,7 @@ enum BluRayISO {
 
     private static func runHdiutil(_ arguments: [String]) throws -> Data {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/hdiutil")
+        process.executableURL = URL(fileURLWithPath: ["/usr/bin/hdiutil", "/usr/sbin/hdiutil"].first { fm.isExecutableFile(atPath: $0) } ?? "/usr/bin/hdiutil")
         process.arguments = arguments
         let out = Pipe()
         let err = Pipe()
