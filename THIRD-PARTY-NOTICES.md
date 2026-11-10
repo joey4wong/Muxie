@@ -11,12 +11,9 @@ Website: https://sparkle-project.org/ , source: https://github.com/sparkle-proje
 License: MIT (with notices for the components Sparkle includes). The complete license text is shipped in the app at Contents/Resources/Licenses/Sparkle-LICENSE.txt.
 The framework is embedded from the official release archive, verified against a published checksum before use. Changes: Sparkle's XPC services (unused by a non-sandboxed app) and its non-English localizations are removed, and the helper tools are re-signed.
 
-## MKVToolNix (not bundled)
+## MKVToolNix (bundled)
 
-Muxie runs the separately installed `mkvmerge` executable. No MKVToolNix code or binary is included in Muxie, its DMG or its update archives.
-Copyright Moritz Bunkus and other contributors. GPL-2.0-only.
-Website: https://mkvtoolnix.download/ , source: https://codeberg.org/mbunkus/mkvtoolnix
-
-## Distribution boundary
-
-Because Muxie does not redistribute MKVToolNix, the GPL obligations for that program stay with its own distribution. If a future build ever bundles `mkvmerge` or any of its libraries, first provide the complete corresponding source, build and install scripts, license texts and notices for the exact bundled versions. A link to the upstream homepage is not a substitute.
+Muxie.app embeds the `mkvmerge` command-line executable and its shared libraries from MKVToolNix, in Contents/Resources/bin. Muxie runs it as a separate process.
+Copyright Moritz Bunkus and other contributors. GPL-2.0-only; the license text ships at Contents/Resources/Licenses/GPL-2.0.txt.
+Website: https://mkvtoolnix.download/ , corresponding source: https://codeberg.org/mbunkus/mkvtoolnix (use the release tag matching the version printed by `mkvmerge --version`). Muxie does not modify it.
+Bundled libraries keep their own licenses; their sources are available from their upstream projects.

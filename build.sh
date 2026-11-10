@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds dist/Muxie.app: Muxie + the Sparkle updater framework. mkvmerge is NOT bundled.
+# Builds dist/Muxie.app: Muxie + the Sparkle updater framework. mkvmerge is bundled.
+# Env: MKVMERGE_BIN (default: auto-detect installed mkvmerge).
 # Env: OUT_DIR (default ./dist), SIGN_IDENTITY (default "-" = ad-hoc).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -52,9 +53,39 @@ ditto "$SPARKLE_DIR/Sparkle.framework" "$FW"
 rm -rf "$FW/Versions/B/XPCServices" "$FW/XPCServices"
 find "$FW/Versions/B/Resources" -maxdepth 1 -name '*.lproj' ! -name 'en.lproj' ! -name 'Base.lproj' -exec rm -rf {} +
 
-# Sign inside-out. Developer ID builds also get the hardened runtime and a secure timestamp.
 if [[ "$SIGN_IDENTITY" == "-" ]]; then SIGN=(codesign --force --sign - --timestamp=none)
 else SIGN=(codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime); fi
+MKVMERGE_SRC="${MKVMERGE_BIN:-}"
+for c in "$MKVMERGE_SRC" /Applications/MKVToolNix*.app/Contents/MacOS/mkvmerge /opt/homebrew/bin/mkvmerge /usr/local/bin/mkvmerge; do
+    if [[ -n "$c" && -x "$c" ]]; then MKVMERGE_SRC="$c"; break; fi
+done
+if [[ -z "$MKVMERGE_SRC" || ! -x "$MKVMERGE_SRC" ]]; then echo "mkvmerge not found. Install MKVToolNix or set MKVMERGE_BIN." >&2; exit 1; fi
+BIN="$APP/Contents/Resources/bin"; LIBS="$APP/Contents/Resources/bin/lib"
+mkdir -p "$BIN" "$LIBS"
+cp "$MKVMERGE_SRC" "$BIN/mkvmerge"; chmod u+w "$BIN/mkvmerge"
+bundle_deps() {
+    local target="$1" dep base
+    while IFS= read -r dep; do
+        case "$dep" in /usr/lib/*|/System/*|"") continue;; esac
+        base="$(basename "$dep")"
+        if [[ ! -f "$LIBS/$base" ]]; then
+            local real="$dep"
+            [[ "$dep" == @rpath/* || "$dep" == @loader_path/* || "$dep" == @executable_path/* ]] && real="$(find "$(dirname "$MKVMERGE_SRC")/.." "$(dirname "$MKVMERGE_SRC")" /opt/homebrew/lib /usr/local/lib /opt/homebrew/opt -name "$base" -type f 2>/dev/null | head -1)"
+            [[ -f "$real" ]] || { echo "Cannot locate dependency $dep" >&2; exit 1; }
+            cp "$real" "$LIBS/$base"; chmod u+w "$LIBS/$base"
+            install_name_tool -id "@loader_path/lib/$base" "$LIBS/$base" 2>/dev/null || true
+            bundle_deps "$LIBS/$base"
+        fi
+        if [[ "$target" == "$BIN/mkvmerge" ]]; then install_name_tool -change "$dep" "@executable_path/lib/$base" "$target"
+        else install_name_tool -change "$dep" "@loader_path/$base" "$target"; fi
+    done < <(otool -L "$target" | tail -n +2 | awk '{print $1}')
+}
+bundle_deps "$BIN/mkvmerge"
+for f in "$LIBS"/*.dylib; do [[ -e "$f" ]] && "${SIGN[@]}" "$f"; done
+"${SIGN[@]}" "$BIN/mkvmerge"
+"$BIN/mkvmerge" --version
+
+# Sign inside-out. Developer ID builds also get the hardened runtime and a secure timestamp.
 "${SIGN[@]}" "$FW/Versions/B/Autoupdate"
 "${SIGN[@]}" "$FW/Versions/B/Updater.app"
 "${SIGN[@]}" "$FW"
