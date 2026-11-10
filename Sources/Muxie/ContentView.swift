@@ -50,7 +50,7 @@ struct ContentView: View {
                                 .padding(.trailing, 14).padding(.top, WorkspaceLayout.inspectorTopInset).padding(.bottom, WorkspaceLayout.listInsets / 2)
                         }
                     }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
-                    VStack(spacing: 8) {
+                    VStack(spacing: 24) {
                         modeSwitch.disabled(model.importing)
                         Button { model.exportPanel() } label: {
                             Text("Export").font(.system(size: 16, weight: .semibold))
@@ -128,7 +128,7 @@ struct ContentView: View {
                     .glassEffect(.regular, in: Capsule())
                 Capsule().fill(.clear)
                     .frame(width: segmentWidth, height: segmentHeight)
-                    .glassEffect(.regular.tint(accent.opacity(0.35)).interactive(), in: Capsule())
+                    .glassEffect(.clear.interactive(), in: Capsule())
                     .offset(x: inset + index * segmentWidth)
                 HStack(spacing: 0) {
                     ForEach(modes) { mode in
