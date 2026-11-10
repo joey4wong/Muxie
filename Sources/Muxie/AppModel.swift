@@ -164,7 +164,10 @@ import UniformTypeIdentifiers
         guard canExport, let source = sources.first else { return }
         let panel = NSSavePanel(); panel.title = "Export MKV"; panel.prompt = "Export"; panel.canCreateDirectories = true
         panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
-        panel.nameFieldStringValue = source.displayURL.deletingPathExtension().lastPathComponent + "-muxie.mkv"
+        // Default to the original name. Only when the source is itself an .mkv in the same folder (the output
+        // cannot overwrite its own source) keep a suffix so the default is still exportable.
+        let baseName = source.displayURL.deletingPathExtension().lastPathComponent
+        panel.nameFieldStringValue = source.displayURL.pathExtension.lowercased() == "mkv" ? baseName + "-muxie.mkv" : baseName + ".mkv"
         panel.directoryURL = source.displayURL.deletingLastPathComponent()
         panel.begin { [weak self] result in
             guard result == .OK, let url = panel.url else { return }
