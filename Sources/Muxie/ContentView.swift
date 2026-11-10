@@ -59,7 +59,7 @@ struct ContentView: View {
                         .frame(maxWidth: 240)
                         .disabled(model.busy)
                         if model.exportMode == .compress && model.compressEligible {
-                            Text("Audio converts to AAC stereo. Subtitles are dropped.")
+                            Text("Audio converts to AAC stereo.")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }

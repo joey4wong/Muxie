@@ -126,7 +126,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let cv = compressedProbe.tracks.first { $0.type == "video" }!
         try check((cv.codec.uppercased().contains("HEVC") || cv.codec.uppercased().contains("H.265")) && (cv.properties.pixel_dimensions.flatMap { Int($0.split(separator: "x").last ?? "") } ?? 9999) <= 1080, "Compress: HEVC output within 1080p")
         try check(compressedProbe.tracks.filter { $0.type == "audio" }.allSatisfy { $0.codec.uppercased().contains("AAC") }, "Compress: audio is AAC")
-        try check(compressedProbe.tracks.filter { $0.type == "subtitles" }.isEmpty, "Compress: subtitles dropped")
+        try check(compressedProbe.tracks.filter { $0.type == "subtitles" }.count == 1, "Compress: subtitle track kept")
         try check(Engine.hevcBitDepth(fromCodecPrivate: "0102" + String(repeating: "00", count: 15) + "FAFA") == 10 && Engine.hevcBitDepth(fromCodecPrivate: "0101" + String(repeating: "00", count: 15) + "F8F8") == 8 && Engine.hevcBitDepth(fromCodecPrivate: nil) == nil && Engine.hevcBitDepth(fromCodecPrivate: "01") == nil, "HEVC bit depth is read from codec private data")
         // The file just produced is HEVC 10-bit <= 1080p, so compressing it again must not be offered.
         let again = AppModel()
@@ -143,6 +143,27 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         await silentCompress.export(to: silentCompressURL)
         if !fm.fileExists(atPath: silentCompressURL.path) { throw MuxError.message("Compress without audio failed: " + (silentCompress.error ?? "no error reported")) }
         try check(try Engine.identify(silentCompressURL, engine: engine).tracks.filter { $0.type == "audio" }.isEmpty, "Compress accepts a project with no audio tracks")
+        // Black bars stay: HandBrake's default auto-crop would turn 1920x1080 into 1920x800.
+        let letterboxModel = AppModel()
+        await letterboxModel.importFiles([fixture.appendingPathComponent("letterbox.mkv")])
+        for track in letterboxModel.tracks { letterboxModel.boolBinding(track.id, \.enabled).wrappedValue = true }
+        letterboxModel.exportMode = .compress
+        let letterboxURL = run.appendingPathComponent("letterbox compress.mkv")
+        await letterboxModel.export(to: letterboxURL)
+        if !fm.fileExists(atPath: letterboxURL.path) { throw MuxError.message("Letterbox compress failed: " + (letterboxModel.error ?? "no error reported")) }
+        let letterboxDims = try Engine.identify(letterboxURL, engine: engine).tracks.first { $0.type == "video" }?.properties.pixel_dimensions
+        try check(letterboxDims == "1920x1080", "Compress keeps black bars (no auto-crop), got \(letterboxDims ?? "nil")")
+        // 4K HDR10 stays 4K HDR10: BT.2020 primaries, PQ transfer, MaxCLL.
+        let hdrModel = AppModel()
+        await hdrModel.importFiles([fixture.appendingPathComponent("hdr10-4k.mkv")])
+        for track in hdrModel.tracks { hdrModel.boolBinding(track.id, \.enabled).wrappedValue = true }
+        try check(hdrModel.compressEligible, "Compress is offered for a 4K HEVC source")
+        hdrModel.exportMode = .compress
+        let hdrURL = run.appendingPathComponent("hdr compress.mkv")
+        await hdrModel.export(to: hdrURL)
+        if !fm.fileExists(atPath: hdrURL.path) { throw MuxError.message("HDR compress failed: " + (hdrModel.error ?? "no error reported")) }
+        let hdrProps = try Engine.identify(hdrURL, engine: engine).tracks.first { $0.type == "video" }?.properties
+        try check(hdrProps?.pixel_dimensions == "3840x2160" && hdrProps?.color_primaries == 9 && hdrProps?.color_transfer_characteristics == 16 && hdrProps?.max_content_light == 1000, "Compress keeps 4K HDR10 (BT.2020, PQ, MaxCLL)")
         let compressCancelURL = run.appendingPathComponent("compress-cancelled.mkv")
         let compressJob = RunningJob()
         let compressWitness = ProgressWitness()

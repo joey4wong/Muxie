@@ -212,10 +212,9 @@ import UniformTypeIdentifiers
             let handbrake = Engine.handbrakeExecutable
             let warnings = try await Task.detached(priority: .userInitiated) { [weak self] in
                 if mode == .compress, let handbrake {
-                    _ = try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running) { [weak self] value in
+                    return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running) { [weak self] value in
                         Task { @MainActor in self?.progress = value }
                     }
-                    return nil as String?
                 }
                 return try Engine.export(plan: plan, output: output, engine: engine, job: running) { [weak self] value in
                     Task { @MainActor in self?.progress = value }

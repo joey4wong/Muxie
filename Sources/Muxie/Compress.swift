@@ -75,11 +75,13 @@ extension Engine {
             "--maxWidth", String(profile.maxWidth),
             "--maxHeight", String(profile.maxHeight),
             "--cfr",
+            // HandBrake crops black bars by default (auto). Keep the picture exactly as the source frames it.
+            "--crop-mode", "none",
             "--all-audio",
             "--aencoder", "av_aac",
             "--mixdown", "stereo",
             "--ab", String(CompressSettings.audioBitrate),
-            "--subtitle", "none",
+            "--all-subtitles",
         ]
     }
 
@@ -139,10 +141,18 @@ extension Engine {
         guard (wantedAudio == 0 || !audioTracks.isEmpty), audioTracks.allSatisfy({ $0.codec.uppercased().contains("AAC") }) else {
             throw MuxError.message("Compressed output audio codec verification failed.")
         }
-        guard !probe.tracks.contains(where: { $0.type == "subtitles" }) else { throw MuxError.message("Compressed output still contains subtitles.") }
+        // HDR10 / HLG sources must stay HDR: PQ is transfer 16, HLG is 18. (4K HDR10 survival is covered by the integration tests.)
+        if let transfer = remuxProbe.tracks.first(where: { $0.type == "video" })?.properties.color_transfer_characteristics, transfer == 16 || transfer == 18,
+           video.properties.color_transfer_characteristics != transfer {
+            throw MuxError.message("Compressed output lost the HDR transfer characteristics.")
+        }
+        // Subtitles are kept. If HandBrake could not carry one over, still deliver the file but say so.
+        let wantedSubs = plan.orderedTracks.filter { $0.kind == "subtitles" }.count
+        let actualSubs = probe.tracks.filter { $0.type == "subtitles" }.count
+        let subtitleWarning: String? = actualSubs < wantedSubs ? "\(wantedSubs - actualSubs) of \(wantedSubs) subtitle tracks could not be kept." : nil
         if job.cancelled { throw CancellationError() }
         try job.commit { try fm.moveItem(at: encodeStaging, to: output) }
-        return nil
+        return subtitleWarning
     }
 }
 

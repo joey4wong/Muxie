@@ -15,6 +15,7 @@ struct Probe: Decodable {
             var default_track: Bool?; var forced_track: Bool?
             var pixel_dimensions: String?; var audio_channels: Int?; var audio_sampling_frequency: Double?
             var codec_private_data: String?
+            var color_primaries: Int?; var color_transfer_characteristics: Int?; var max_content_light: Int?
         }
         var id: Int; var type: String; var codec: String; var properties: Properties
     }
