@@ -15,5 +15,5 @@ The framework is embedded from the official release archive, verified against a 
 
 Muxie.app embeds the `mkvmerge` command-line executable and its shared libraries from MKVToolNix, in Contents/Resources/bin. Muxie runs it as a separate process.
 Copyright Moritz Bunkus and other contributors. GPL-2.0-only; the license text ships at Contents/Resources/Licenses/GPL-2.0.txt.
-Website: https://mkvtoolnix.download/ , corresponding source: https://codeberg.org/mbunkus/mkvtoolnix (use the release tag matching the version printed by `mkvmerge --version`). Muxie does not modify it.
+Bundled version: 103.0. Website: https://mkvtoolnix.download/ , corresponding source: https://codeberg.org/mbunkus/mkvtoolnix (tag `release-103.0`, matching `mkvmerge --version`). Muxie does not modify it.
 Bundled libraries keep their own licenses; their sources are available from their upstream projects.

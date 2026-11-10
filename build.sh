@@ -55,8 +55,8 @@ find "$FW/Versions/B/Resources" -maxdepth 1 -name '*.lproj' ! -name 'en.lproj' !
 
 if [[ "$SIGN_IDENTITY" == "-" ]]; then SIGN=(codesign --force --sign - --timestamp=none)
 else SIGN=(codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime); fi
-MKVTOOLNIX_VERSION=101.0
-MKVTOOLNIX_SHA256=12f7b200d1bc64db16933b55f2c3ce47fdbe4a88878e2e6aa26b702424eac1f0
+MKVTOOLNIX_VERSION=103.0
+MKVTOOLNIX_SHA256=05670ef070783a4afa23b9a289373472ac168112c83926dae17e29ab32198501
 MKVTOOLNIX_DMG="$ROOT/.build/MKVToolNix-$MKVTOOLNIX_VERSION-1-arm64.dmg"
 MKVMERGE_SRC="${MKVMERGE_BIN:-}"
 if [[ -z "$MKVMERGE_SRC" ]]; then
@@ -78,15 +78,19 @@ fi
 BIN="$APP/Contents/Resources/bin"; LIBS="$APP/Contents/Resources/bin/lib"
 mkdir -p "$BIN" "$LIBS"
 cp "$MKVMERGE_SRC" "$BIN/mkvmerge"; chmod u+w "$BIN/mkvmerge"
+# MKVToolNix DMG SHA-256 from https://mkvtoolnix.download/macos/releases/103.0/MKVToolNix-103.0-1-arm64.dmg.sha256
 bundle_deps() {
-    local target="$1" dep base
+    local target="$1" dep base real mkv_libs
+    mkv_libs="$(dirname "$MKVMERGE_SRC")/libs"
     while IFS= read -r dep; do
         case "$dep" in /usr/lib/*|/System/*|"") continue;; esac
         base="$(basename "$dep")"
         if [[ ! -f "$LIBS/$base" ]]; then
-            local real="$dep"
-            [[ "$dep" == @rpath/* || "$dep" == @loader_path/* || "$dep" == @executable_path/* ]] && real="$(find "$(dirname "$MKVMERGE_SRC")/libs" "$(dirname "$MKVMERGE_SRC")/.." "$(dirname "$MKVMERGE_SRC")" /opt/homebrew/lib /usr/local/lib /opt/homebrew/opt -name "$base" \( -type f -o -type l \) 2>/dev/null | head -1 || true)"
-            [[ -f "$real" ]] || { echo "Cannot locate dependency $dep" >&2; exit 1; }
+            if [[ -f "$dep" ]]; then real="$dep"
+            else
+                real="$(find "$mkv_libs" "$(dirname "$MKVMERGE_SRC")" "$(dirname "$MKVMERGE_SRC")/.." /opt/homebrew/lib /usr/local/lib -name "$base" \( -type f -o -type l \) 2>/dev/null | head -1 || true)"
+            fi
+            [[ -n "$real" && -e "$real" ]] || { echo "Bundling failed: non-system dependency $dep (from $target) is not in the app or MKVToolNix bundle." >&2; exit 1; }
             cp -L "$real" "$LIBS/$base"; chmod u+w "$LIBS/$base"
             install_name_tool -id "@loader_path/lib/$base" "$LIBS/$base" 2>/dev/null || true
             bundle_deps "$LIBS/$base"
