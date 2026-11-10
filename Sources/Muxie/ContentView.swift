@@ -6,15 +6,27 @@ import AppKit
 import UniformTypeIdentifiers
 
 private let accent = Color("AccentColor")
+/// Native Liquid Glass button (system `.glass` style, capsule shape). `compact: false` is the large variant.
 private struct NeutralGlassButtonStyle: ButtonStyle {
     var compact = true
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
+        // Own glass capsule instead of `.glass`: the system style picks up the app accent as a coloured fill.
         configuration.label.foregroundStyle(.primary)
-            .padding(.horizontal, compact ? 12 : 24)
-            .padding(.vertical, compact ? 6 : 9)
-            .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: compact ? 10 : 18))
-            .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+            .padding(.horizontal, compact ? 14 : 26)
+            .padding(.vertical, compact ? 6 : 10)
+            .glassEffect(.regular.interactive(), in: Capsule())
+            .opacity(enabled ? (configuration.isPressed ? 0.75 : 1) : 0.45)
+    }
+}
+/// A faint graphite backdrop with a muted gray-green glow, so glass has something to refract instead of a flat fill.
+private struct GlassBackdrop: View {
+    var body: some View {
+        ZStack {
+            Color(nsColor: .windowBackgroundColor)
+            RadialGradient(colors: [accent.opacity(0.30), .clear], center: .topLeading, startRadius: 0, endRadius: 520)
+            RadialGradient(colors: [accent.opacity(0.20), .clear], center: .bottomTrailing, startRadius: 0, endRadius: 480)
+        }.ignoresSafeArea()
     }
 }
 struct ContentView: View {
@@ -32,8 +44,9 @@ struct ContentView: View {
                         trackList(compact: compactInspector)
                             .frame(maxWidth: .infinity, alignment: .top)
                         if model.active != nil && !compactInspector {
-                            Divider()
                             inspector.frame(width: 238)
+                                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
+                                .padding(.trailing, 14).padding(.top, 14).padding(.bottom, 8)
                         }
                     }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
                     Button("Export") { model.exportPanel() }
@@ -50,8 +63,7 @@ struct ContentView: View {
 
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .tint(accent)
+        .background(GlassBackdrop())
         .navigationTitle(model.sources.first?.url.lastPathComponent ?? "Muxie")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -109,18 +121,20 @@ struct ContentView: View {
                             Text(filter)
                             Text("\(model.tracks.filter { filter == "All" || $0.filterName == filter }.count)")
                                 .font(.system(size: 10, weight: .medium, design: .rounded)).opacity(0.55)
-                        }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 11).padding(.vertical, 8)
+                        }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 12).padding(.vertical, 8)
                             .foregroundStyle(model.filter == filter ? Color.primary : Color.secondary)
-                            .background(model.filter == filter ? Color.primary.opacity(0.045) : .clear, in: Capsule())
+                            .glassEffect(model.filter == filter ? .regular.interactive() : .identity, in: Capsule())
                     }.buttonStyle(.plain)
                 }
                 Spacer(minLength: 0)
             }.frame(height: WorkspaceLayout.filterHeight).disabled(model.busy)
-            VStack(spacing: WorkspaceLayout.rowSpacing) {
-                ForEach(model.pagedTracks) { track in trackRow(track, compact: compact) }
-                if model.filtered.isEmpty {
-                    Text("No tracks").font(.callout).foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity).frame(height: WorkspaceLayout.rowHeight)
+            GlassEffectContainer(spacing: WorkspaceLayout.rowSpacing) {
+                VStack(spacing: WorkspaceLayout.rowSpacing) {
+                    ForEach(model.pagedTracks) { track in trackRow(track, compact: compact) }
+                    if model.filtered.isEmpty {
+                        Text("No tracks").font(.callout).foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity).frame(height: WorkspaceLayout.rowHeight)
+                    }
                 }
             }.fixedSize(horizontal: false, vertical: true)
             if model.reservesPagination {
@@ -144,7 +158,7 @@ struct ContentView: View {
             Toggle("Include \(model.displayName(for: track))", isOn: model.boolBinding(track.id, \.enabled)).labelsHidden().toggleStyle(.checkbox)
             Image(systemName: track.symbol).font(.system(size: 17, weight: .medium))
                 .foregroundStyle(.secondary).frame(width: 38, height: 39)
-                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 5) {
                 Text(model.displayName(for: track)).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Text(track.codec + (track.detail.isEmpty ? "" : " · " + track.detail)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
@@ -155,8 +169,7 @@ struct ContentView: View {
                 if track.isDefault { Text("Default").font(.system(size: 9)).foregroundStyle(.secondary) }
             }
         }.padding(.horizontal, 12).frame(height: WorkspaceLayout.rowHeight).contentShape(RoundedRectangle(cornerRadius: 13))
-            .background(selected ? accent.opacity(0.035) : Color(nsColor: .controlBackgroundColor).opacity(0.45), in: RoundedRectangle(cornerRadius: 13))
-            .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(selected ? accent.opacity(0.30) : .primary.opacity(0.065)))
+            .glassEffect(selected ? .regular.tint(accent.opacity(0.22)).interactive() : .regular.interactive(), in: RoundedRectangle(cornerRadius: 13))
             .opacity(track.enabled || selected ? 1 : 0.72)
             .onTapGesture {
                 model.selected = track.id
