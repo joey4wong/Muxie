@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 FFMPEG="${FFMPEG:-$(command -v ffmpeg || true)}"
 [[ -n "$FFMPEG" ]] || { echo 'Install ffmpeg to generate test fixtures (not needed by the app).' >&2; exit 1; }
+export FFMPEG
 T="$(mktemp -d "${TMPDIR:-/tmp}/muxie-tests.XXXXXX")"
 "$FFMPEG" -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=1280x720:rate=24' -f lavfi -i 'sine=frequency=440:sample_rate=48000' -t 8 -c:v libx264 -pix_fmt yuv420p -c:a aac -metadata:s:a:0 language=eng "$T/测试影片 sample.mp4"
 "$FFMPEG" -hide_banner -loglevel error -f lavfi -i 'sine=frequency=660:sample_rate=48000' -t 8 -c:a aac "$T/国语音轨.m4a"
@@ -16,6 +17,9 @@ printf '1\n00:00:00,500 --> 00:00:03,500\nHello, Muxie.\n' > "$T/English.srt"
 for n in 0 1; do
   "$FFMPEG" -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=640x360:rate=24' -f lavfi -i "sine=frequency=$((440 + n * 110)):sample_rate=48000" -t 2 -c:v libx264 -pix_fmt yuv420p -c:a ac3 -f mpegts "$T/clip$n.m2ts"
 done
+# AC-3 5.1 source: a non-AAC track that Compress must re-encode.
+"$FFMPEG" -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=640x360:rate=24' -f lavfi -i 'sine=frequency=300:sample_rate=48000' -t 3 \
+  -filter_complex '[1:a]aformat=sample_fmts=fltp:channel_layouts=5.1[a]' -map 0:v -map '[a]' -c:v libx264 -pix_fmt yuv420p -c:a ac3 "$T/ac3-51.mkv"
 # Stereo + 5.1 audio for compress channel-layout tests.
 "$FFMPEG" -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=640x360:rate=24' -f lavfi -i 'sine=frequency=440:sample_rate=48000' -f lavfi -i 'sine=frequency=330:sample_rate=48000' -t 4 \
   -filter_complex '[1:a]aformat=sample_fmts=fltp:channel_layouts=stereo[a0];[2:a]aformat=sample_fmts=fltp:channel_layouts=5.1[a1]' \

@@ -180,7 +180,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
             CompressSettings.audioBitrateKbps(channelCount: 1) == 96
                 && CompressSettings.audioBitrateKbps(channelCount: 2) == 192
                 && CompressSettings.audioBitrateKbps(channelCount: 6) == 384
-                && CompressSettings.audioBitrateKbps(channelCount: 8) == 512,
+                && CompressSettings.audioBitrateKbps(channelCount: 8) == 384,
             "Audio channel-count to bitrate table"
         )
         try check(CompressSettings.encodedChannelCount(sourceChannels: 8) == 6, "7.1 and above cap at 5.1 for AAC")
@@ -231,6 +231,33 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(dualAudios.count == 2 && dualAudios[0].properties.audio_channels == 2 && dualAudios[1].properties.audio_channels == 6,
             "Compress dual audio: AAC 2-channel and 6-channel tracks")
         try check(dualAudios.allSatisfy { $0.codec.uppercased().contains("AAC") }, "Compress dual audio: both tracks are AAC")
+        // AAC sources are copied, not re-encoded: the packets of each output track equal the source's.
+        func audioMD5(_ url: URL, _ index: Int) throws -> String {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["FFMPEG"] ?? "/opt/homebrew/bin/ffmpeg")
+            // -nostdin and a null stdin: ffmpeg otherwise reads the terminal and gets suspended.
+            process.arguments = ["-nostdin", "-v", "error", "-i", url.path, "-map", "0:a:\(index)", "-c", "copy", "-f", "md5", "-"]
+            let pipe = Pipe(); process.standardOutput = pipe; process.standardError = FileHandle.nullDevice; process.standardInput = FileHandle.nullDevice
+            try process.run(); process.waitUntilExit()
+            return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let dualSource = fixture.appendingPathComponent("dual-audio.mp4")
+        let md5Source0 = try audioMD5(dualSource, 0), md5Source1 = try audioMD5(dualSource, 1)
+        try check(md5Source0.hasPrefix("MD5=") && md5Source0 == (try audioMD5(dualOut, 0)) && md5Source1 == (try audioMD5(dualOut, 1)), "AAC sources are copied bit for bit")
+        // A non-AAC source (AC-3 5.1) is still re-encoded to AAC and keeps its six channels.
+        let ac3Model = AppModel()
+        await ac3Model.importFiles([fixture.appendingPathComponent("ac3-51.mkv")])
+        for track in ac3Model.tracks { ac3Model.boolBinding(track.id, \.enabled).wrappedValue = true }
+        ac3Model.exportMode = .compress
+        let ac3Out = run.appendingPathComponent("ac3 compress.mkv")
+        await ac3Model.export(to: ac3Out)
+        if !fm.fileExists(atPath: ac3Out.path) { throw MuxError.message("AC-3 compress failed: " + (ac3Model.error ?? "no error reported")) }
+        let ac3Audio = try Engine.identify(ac3Out, engine: engine).tracks.filter { $0.type == "audio" }
+        try check(ac3Audio.count == 1 && ac3Audio[0].codec.uppercased().contains("AAC") && ac3Audio[0].properties.audio_channels == 6, "AC-3 5.1 source is re-encoded to AAC 5.1")
+        // Argument list: per-track encoders, mixdowns and bitrates in order; AAC above 5.1 is encoded (to 5.1), not copied.
+        let hbArgs = Engine.handbrakeArguments(input: URL(fileURLWithPath: "/in.mkv"), output: URL(fileURLWithPath: "/out.mkv"), profile: CompressProfile(height: 1080), sourceAudioChannels: [2, 6, 8, 6], sourceAudioIsAAC: [true, false, false, true])
+        func hbValue(_ flag: String) -> String? { hbArgs.firstIndex(of: flag).map { hbArgs[$0 + 1] } }
+        try check(hbValue("--aencoder") == "copy:aac,av_aac,av_aac,copy:aac" && hbValue("--ab") == "192,384,384,384" && hbValue("--mixdown") == "stereo,none,5point1,none" && hbValue("--audio-fallback") == "av_aac", "Compress audio arguments: copy AAC, encode the rest, 7.1 at 384 kbps as 5.1")
         func enqueueEnabled(_ model: AppModel, output: URL) {
             for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
             model.enqueueExport(to: output)

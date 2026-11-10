@@ -30,8 +30,7 @@ enum CompressSettings {
         switch channelCount {
         case 1: return 96
         case 2: return 192
-        case 3...6: return 384
-        default: return 512
+        default: return 384   // 3 to 6 channels; 7.1 sources are encoded as 5.1 and use the same rate
         }
     }
 
@@ -87,7 +86,10 @@ extension Engine {
         return Int(bytes[17] & 7) + 8
     }
 
-    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile, sourceAudioChannels: [Int]) -> [String] {
+    /// AAC sources with at most 5.1 channels are copied untouched (no generation loss, no encode time).
+    static func audioIsCopied(channels: Int, isAAC: Bool) -> Bool { isAAC && channels <= CompressSettings.maxAACChannels }
+
+    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile, sourceAudioChannels: [Int], sourceAudioIsAAC: [Bool] = []) -> [String] {
         var args = [
             "--input", input.path,
             "--output", output.path,
@@ -102,13 +104,17 @@ extension Engine {
             "--cfr",
             "--crop-mode", "none",
             "--all-audio",
-            "--aencoder", "av_aac",
             "--all-subtitles",
         ]
         if !sourceAudioChannels.isEmpty {
             let bitrates = sourceAudioChannels.map { String(CompressSettings.audioBitrateKbps(channelCount: $0)) }.joined(separator: ",")
             let mixdowns = sourceAudioChannels.map { CompressSettings.handbrakeMixdown(sourceChannels: $0) }.joined(separator: ",")
-            args += ["--mixdown", mixdowns, "--ab", bitrates]
+            // One entry per audio track, in order. A copied track ignores its mixdown and bitrate entries.
+            let encoders = sourceAudioChannels.enumerated().map { index, channels in
+                audioIsCopied(channels: channels, isAAC: index < sourceAudioIsAAC.count && sourceAudioIsAAC[index]) ? "copy:aac" : "av_aac"
+            }.joined(separator: ",")
+            // The fallback matters: HandBrake's default fallback for a track that cannot be copied is AC-3.
+            args += ["--aencoder", encoders, "--audio-fallback", "av_aac", "--mixdown", mixdowns, "--ab", bitrates]
         }
         return args
     }
@@ -139,9 +145,11 @@ extension Engine {
         if job.cancelled { throw CancellationError() }
         let remuxProbe = try identify(remuxStaging, engine: mkvmerge, job: job)
         let sourceHeight = remuxProbe.tracks.first(where: { $0.type == "video" })?.properties.pixel_dimensions.flatMap { Int($0.split(separator: "x").last ?? "") } ?? 1080
-        let sourceAudioChannels = remuxProbe.tracks.filter { $0.type == "audio" }.map { $0.properties.audio_channels ?? 2 }
+        let sourceAudioTracks = remuxProbe.tracks.filter { $0.type == "audio" }
+        let sourceAudioChannels = sourceAudioTracks.map { $0.properties.audio_channels ?? 2 }
+        let sourceAudioIsAAC = sourceAudioTracks.map { $0.codec.uppercased().contains("AAC") }
         let profile = CompressProfile(height: sourceHeight)
-        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile, sourceAudioChannels: sourceAudioChannels)
+        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile, sourceAudioChannels: sourceAudioChannels, sourceAudioIsAAC: sourceAudioIsAAC)
         let hbResult = try job.runHandBrake(engine: handbrake, arguments: hbArgs) { value in
             progress(0.12 + value * 0.88)
         }
