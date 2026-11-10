@@ -59,11 +59,6 @@ struct ContentView: View {
                         .tint(.gray)
                         .frame(maxWidth: 240)
                         .disabled(model.busy)
-                        if model.exportMode == .compress && model.compressEligible {
-                            Text("Audio converts to AAC stereo. Subtitles are dropped.")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                        }
                         Button("Export") { model.exportPanel() }
                             .font(.system(size: 15, weight: .semibold))
                             .padding(.horizontal, 40).padding(.vertical, 9)
