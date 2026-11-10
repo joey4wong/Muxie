@@ -40,7 +40,9 @@ enum BluRayISO {
         case .bluRay:
             break
         }
-        guard let feature = try largestM2TS(under: mountPoint) else {
+        let featureFile: (url: URL, bytes: Int64)?
+        do { featureFile = try largestM2TS(under: mountPoint) } catch { detachDevice(device); throw error }
+        guard let feature = featureFile else {
             detachDevice(device)
             throw MuxError.message("No .m2ts files were found on this disc image.")
         }
@@ -78,7 +80,7 @@ enum BluRayISO {
     private static func classifyVolume(at mount: URL) throws -> VolumeKind {
         let bdmv = mount.appendingPathComponent("BDMV")
         let stream = bdmv.appendingPathComponent("STREAM")
-        if fm.fileExists(atPath: bdmv.appendingPathComponent("AACS").path) { return .encrypted }
+        if fm.fileExists(atPath: mount.appendingPathComponent("AACS").path) || fm.fileExists(atPath: bdmv.appendingPathComponent("AACS").path) { return .encrypted }
         if fm.fileExists(atPath: stream.path) { return .bluRay }
         if fm.fileExists(atPath: mount.appendingPathComponent("VIDEO_TS").path) { return .dvd }
         return .unknown
