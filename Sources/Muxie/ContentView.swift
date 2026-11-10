@@ -55,7 +55,7 @@ struct ContentView: View {
                                 Text(mode == .remux ? "Remux" : "Compress").tag(mode)
                             }
                         }
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.segmented).labelsHidden()
                         .frame(maxWidth: 240)
                         .disabled(model.busy)
                         if model.exportMode == .compress && model.compressEligible {
@@ -64,7 +64,7 @@ struct ContentView: View {
                                     Text(step.label).tag(step)
                                 }
                             }
-                            .pickerStyle(.segmented)
+                            .pickerStyle(.segmented).labelsHidden()
                             .frame(maxWidth: 320)
                             .disabled(model.busy)
                             Text("Audio converts to AAC.")

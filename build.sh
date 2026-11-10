@@ -112,17 +112,24 @@ HANDBRAKE_SRC="${HANDBRAKE_BIN:-}"
 if [[ -z "$HANDBRAKE_SRC" ]]; then
     if [[ ! -f "$HANDBRAKE_DMG" ]]; then
         mkdir -p "$ROOT/.build"
-        curl -fsSL -o "$HANDBRAKE_DMG" "https://handbrake.fr/rotation.php?file=HandBrakeCLI-$HANDBRAKE_VERSION.dmg"
+        curl -fsSL -o "$HANDBRAKE_DMG" "https://github.com/HandBrake/HandBrake/releases/download/$HANDBRAKE_VERSION/HandBrakeCLI-$HANDBRAKE_VERSION.dmg"
     fi
     ACTUAL="$(shasum -a 256 "$HANDBRAKE_DMG" | awk '{print $1}')"
     if [[ "$ACTUAL" != "$HANDBRAKE_SHA256" ]]; then echo "HandBrake CLI checksum mismatch (got $ACTUAL)." >&2; rm -f "$HANDBRAKE_DMG"; exit 1; fi
     HB_MNT="$(mktemp -d)"
     hdiutil attach -nobrowse -readonly -mountpoint "$HB_MNT" "$HANDBRAKE_DMG" >/dev/null
-    HANDBRAKE_SRC="$(find "$HB_MNT" -name HandBrakeCLI \( -type f -o -type l \) 2>/dev/null | head -1 || true)"
+    HB_FOUND="$(find "$HB_MNT" -name HandBrakeCLI \( -type f -o -type l \) 2>/dev/null | head -1 || true)"
+    # Copy out before detaching: the file disappears with the mount.
+    HANDBRAKE_SRC="$ROOT/.build/HandBrakeCLI-$HANDBRAKE_VERSION-bin"
+    if [[ -n "$HB_FOUND" ]]; then cp -L "$HB_FOUND" "$HANDBRAKE_SRC"; fi
     hdiutil detach "$HB_MNT" >/dev/null
-    [[ -n "$HANDBRAKE_SRC" && -x "$HANDBRAKE_SRC" ]] || { echo "HandBrakeCLI not found in the DMG." >&2; exit 1; }
+    [[ -n "$HB_FOUND" && -x "$HANDBRAKE_SRC" ]] || { echo "HandBrakeCLI not found in the DMG." >&2; exit 1; }
 fi
-cp "$HANDBRAKE_SRC" "$BIN/HandBrakeCLI"; chmod u+w "$BIN/HandBrakeCLI"
+# The official CLI is a universal binary; Muxie is Apple Silicon only. Keep just arm64: it halves the size, and otool -L on a
+# fat file prints a second architecture header that bundle_deps would mistake for a dependency.
+if lipo -archs "$HANDBRAKE_SRC" | grep -q x86_64; then lipo "$HANDBRAKE_SRC" -thin arm64 -output "$BIN/HandBrakeCLI"
+else cp "$HANDBRAKE_SRC" "$BIN/HandBrakeCLI"; fi
+chmod u+w "$BIN/HandBrakeCLI"
 bundle_deps "$BIN/HandBrakeCLI" "$(dirname "$HANDBRAKE_SRC")"
 "${SIGN[@]}" "$BIN/HandBrakeCLI"
 "$BIN/HandBrakeCLI" --version | head -1

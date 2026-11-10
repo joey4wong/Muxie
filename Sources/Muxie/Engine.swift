@@ -14,6 +14,7 @@ struct Probe: Decodable {
             var track_name: String?; var language: String?; var language_ietf: String?
             var default_track: Bool?; var forced_track: Bool?
             var pixel_dimensions: String?; var audio_channels: Int?; var audio_sampling_frequency: Double?
+            var codec_private_data: String?
         }
         var id: Int; var type: String; var codec: String; var properties: Properties
     }
@@ -61,7 +62,8 @@ struct ExportPlan: Sendable {
     }
 }
 final class RunningJob: @unchecked Sendable {
-    private let lock = NSLock(); private var process: Process?; private var wasCancelled = false; private var committed = false
+    // Internal (not private): RunningJob.runHandBrake lives in Compress.swift and shares this state.
+    let lock = NSLock(); var process: Process?; var wasCancelled = false; private var committed = false
     func cancel() { lock.lock(); defer { lock.unlock() }; guard !committed else { return }; wasCancelled = true; if process?.isRunning == true { process?.terminate() } }
     func commit(_ action: () throws -> Void) throws {
         lock.lock(); defer { lock.unlock() }

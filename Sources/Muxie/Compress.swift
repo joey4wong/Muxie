@@ -52,9 +52,24 @@ extension Engine {
         guard let vt = probe.tracks.first(where: { $0.id == video.trackID && $0.type == "video" }) else { return false }
         let codec = vt.codec.uppercased()
         guard codec.contains("HEVC") || codec.contains("H.265") else { return false }
-        guard codec.contains("10") || vt.codec.contains("10bit") || vt.codec.contains("Main 10") else { return false }
+        // mkvmerge names the codec "HEVC/H.265/MPEG-H" without a bit depth; the depth is in the hvcC record (codec_private_data).
+        guard hevcBitDepth(fromCodecPrivate: vt.properties.codec_private_data) == 10 else { return false }
         guard let dims = vt.properties.pixel_dimensions, let height = Int(dims.split(separator: "x").last ?? "") else { return false }
         return height <= CompressSettings.maxHeight
+    }
+
+    /// Luma bit depth from an HEVCDecoderConfigurationRecord given as hex (as mkvmerge prints it), or nil if it cannot be read.
+    static func hevcBitDepth(fromCodecPrivate hex: String?) -> Int? {
+        guard let hex else { return nil }
+        let chars = Array(hex)
+        var bytes: [UInt8] = []
+        var i = 0
+        while i + 1 < chars.count, bytes.count < 19 {
+            guard let byte = UInt8(String(chars[i...i + 1]), radix: 16) else { return nil }
+            bytes.append(byte); i += 2
+        }
+        guard bytes.count >= 19, bytes[0] == 1 else { return nil }
+        return Int(bytes[17] & 7) + 8
     }
 
     static func handbrakeArguments(input: URL, output: URL, quality: CompressQuality, audioBitrate: Int) -> [String] {
@@ -72,7 +87,6 @@ extension Engine {
             "--aencoder", "av_aac",
             "--ab", String(audioBitrate),
             "--all-subtitles",
-            "--no-messages",
         ]
     }
 
@@ -116,6 +130,11 @@ extension Engine {
         }
         guard hbResult.0 == 0 else { throw MuxError.message(String(decoding: hbResult.1, as: UTF8.self)) }
         if job.cancelled { throw CancellationError() }
+        // HandBrakeCLI exits 0 even for an unknown option or a failed scan, so success is only trusted when the file exists.
+        guard fm.fileExists(atPath: encodeStaging.path) else {
+            let tail = String(decoding: hbResult.1, as: UTF8.self).components(separatedBy: .newlines).suffix(6).joined(separator: "\n")
+            throw MuxError.message("HandBrake did not produce an output file.\n" + tail)
+        }
         let probe = try identify(encodeStaging, engine: mkvmerge, job: job)
         guard let video = probe.tracks.first(where: { $0.type == "video" }) else {
             throw MuxError.message("Compressed output has no video track.")
