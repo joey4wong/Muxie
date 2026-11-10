@@ -297,6 +297,43 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         }
         await removeQueued.waitForQueueIdle()
         try check(fm.fileExists(atPath: run.appendingPathComponent("queue-remove-a.mkv").path) && !fm.fileExists(atPath: run.appendingPathComponent("queue-remove-b.mkv").path), "Removing a queued job prevents it from running")
+        // Blu-ray main title keeps its audio. mkvmerge lists only the video track when it is given a playlist, so the
+        // clips named by the main playlist are used instead (a real disc: 1 video, TrueHD, AC-3 and 3 PGS in 00000.m2ts).
+        func mpls(_ items: [(String, Int, Int)], padTo: Int = 0) -> Data {
+            func be32(_ v: Int) -> [UInt8] { [UInt8((v >> 24) & 255), UInt8((v >> 16) & 255), UInt8((v >> 8) & 255), UInt8(v & 255)] }
+            func be16(_ v: Int) -> [UInt8] { [UInt8((v >> 8) & 255), UInt8(v & 255)] }
+            var d = Data("MPLS0200".utf8)
+            d.append(contentsOf: be32(40)); d.append(Data(repeating: 0, count: 28))
+            d.append(contentsOf: be32(0)); d.append(contentsOf: be16(0)); d.append(contentsOf: be16(items.count)); d.append(contentsOf: be16(0))
+            for (clip, inTime, outTime) in items {
+                d.append(contentsOf: be16(20)); d.append(Data(clip.utf8)); d.append(Data("M2TS".utf8)); d.append(contentsOf: [0, 1, 0])
+                d.append(contentsOf: be32(inTime)); d.append(contentsOf: be32(outTime))
+            }
+            if padTo > d.count { d.append(Data(repeating: 0, count: padTo - d.count)) }
+            return d
+        }
+        let discRoot = fixture.appendingPathComponent("bdmv-audio-fixture")
+        let discPlaylists = discRoot.appendingPathComponent("BDMV/PLAYLIST", isDirectory: true)
+        let discStreams = discRoot.appendingPathComponent("BDMV/STREAM", isDirectory: true)
+        try fm.createDirectory(at: discPlaylists, withIntermediateDirectories: true)
+        try fm.createDirectory(at: discStreams, withIntermediateDirectories: true)
+        for n in 0...1 { try fm.copyItem(at: fixture.appendingPathComponent("clip\(n).m2ts"), to: discStreams.appendingPathComponent("0000\(n).m2ts")) }
+        // Main title: two clips, 4 s, a tiny file. Decoy: one clip, 1 s, padded to a bigger file.
+        try mpls([("00000", 0, 90_000), ("00001", 0, 90_000)]).write(to: discPlaylists.appendingPathComponent("00001.mpls"))
+        try mpls([("00001", 0, 45_000)], padTo: 4096).write(to: discPlaylists.appendingPathComponent("00002.mpls"))
+        try check(BluRayISO.parsePlayItems(try Data(contentsOf: discPlaylists.appendingPathComponent("00001.mpls"))) == [BluRayISO.PlayItem(clip: "00000", seconds: 2), BluRayISO.PlayItem(clip: "00001", seconds: 2)], "Playlist parser reads clip names and running time")
+        let discClips = try BluRayISO.mainClips(under: discRoot)
+        try check(discClips.map(\.lastPathComponent) == ["00000.m2ts", "00001.m2ts"], "Blu-ray main title is the longest-running playlist, not the biggest file")
+        let discProbe = try Engine.identify(discClips[0], engine: engine)
+        try check(discProbe.tracks.contains { $0.type == "video" } && discProbe.tracks.contains { $0.type == "audio" }, "Blu-ray main title clip lists its audio track")
+        let discSourceID = UUID()
+        let discSource = MediaSource(id: discSourceID, url: discClips[0], container: "MPEG-TS", byteSize: 1_000_000, appendedParts: Array(discClips.dropFirst()))
+        let discTracks = discProbe.tracks.filter { ["video", "audio"].contains($0.type) }.map { MediaTrack(sourceID: discSourceID, trackID: $0.id, kind: $0.type, codec: $0.codec, name: "", language: "und", isDefault: false, isForced: false, enabled: true, detail: "") }
+        let discOut = run.appendingPathComponent("blu-ray main title.mkv")
+        _ = try Engine.export(plan: ExportPlan(sources: [discSource], tracks: discTracks), output: discOut, engine: engine, job: RunningJob()) { _ in }
+        let discOutProbe = try Engine.identify(discOut, engine: engine)
+        let discSeconds = Double(discOutProbe.container.properties?.duration ?? 0) / 1_000_000_000
+        try check(discOutProbe.tracks.contains { $0.type == "audio" } && discSeconds > 3.0, "Blu-ray main title export appends all clips and keeps audio (\(discSeconds) s)")
         let bdmvRoot = fixture.appendingPathComponent("bdmv-title-fixture")
         let playlistDir = bdmvRoot.appendingPathComponent("BDMV/PLAYLIST", isDirectory: true)
         let streamDir = bdmvRoot.appendingPathComponent("BDMV/STREAM", isDirectory: true)

@@ -8,7 +8,10 @@ enum MuxError: LocalizedError {
     var errorDescription: String? { if case .message(let message) = self { return message }; return nil }
 }
 struct Probe: Decodable {
-    struct Container: Decodable { var recognized: Bool; var supported: Bool; var type: String? }
+    struct Container: Decodable {
+        struct Properties: Decodable { var duration: Int64? }
+        var recognized: Bool; var supported: Bool; var type: String?; var properties: Properties?
+    }
     struct Track: Decodable {
         struct Properties: Decodable {
             var track_name: String?; var language: String?; var language_ietf: String?
@@ -31,6 +34,8 @@ struct MediaTrack: Identifiable, Equatable, Sendable {
 }
 struct MediaSource: Identifiable, Equatable, Sendable {
     var id: UUID; var url: URL; var originURL: URL? = nil; var container: String; var byteSize: Int64
+    /// Further files of the same source, appended after `url` (the extra clips of a Blu-ray main title).
+    var appendedParts: [URL] = []
     var displayURL: URL { originURL ?? url }
 }
 struct ExportPlan: Sendable {
@@ -56,7 +61,9 @@ struct ExportPlan: Sendable {
                 args += ["--track-name", "\(track.trackID):\(track.name)", "--language", "\(track.trackID):\(track.language.isEmpty ? "und" : track.language)", "--default-track-flag", "\(track.trackID):\(track.isDefault ? "yes" : "no")", "--forced-display-flag", "\(track.trackID):\(track.isForced ? "yes" : "no")"]
                 order.append("\(fileIndex):\(track.trackID)")
             }
-            args.append(source.url.path); fileIndex += 1
+            args.append(source.url.path)
+            for part in source.appendedParts { args += ["+", part.path] }
+            fileIndex += 1
         }
         args += ["--track-order", order.joined(separator: ",")]
         return args

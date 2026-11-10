@@ -31,6 +31,7 @@ struct QueueJob: Identifiable, Equatable, Sendable {
             var copy = source
             copy.url = iso
             copy.originURL = iso
+            copy.appendedParts = []
             return copy
         }
         return QueueJob(id: UUID(), sources: snapSources, tracks: tracks, mode: mode, output: output, state: .queued, warning: nil)

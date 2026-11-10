@@ -90,10 +90,12 @@ import UniformTypeIdentifiers
                 let importURL: URL
                 let originURL: URL?
                 let sourceBytes: Int64
+                var appendedParts: [URL] = []
                 if url.pathExtension.lowercased() == "iso" {
                     let mount = try await Task.detached(priority: .userInitiated) { try BluRayISO.attach(iso: canonical) }.value
                     openedMount = mount
                     importURL = mount.mediaURL
+                    appendedParts = mount.extraParts
                     originURL = canonical
                     sourceBytes = mount.inputBytes
                 } else {
@@ -107,7 +109,7 @@ import UniformTypeIdentifiers
                 let isPrimary = sources.isEmpty
                 if isPrimary && !supported.contains(where: { $0.type == "video" }) { throw MuxError.message("Open a video before adding audio or subtitles.") }
                 let sourceID = UUID()
-                sources.append(MediaSource(id: sourceID, url: importURL, originURL: originURL, container: probe.container.type ?? importURL.pathExtension.uppercased(), byteSize: sourceBytes))
+                sources.append(MediaSource(id: sourceID, url: importURL, originURL: originURL, container: probe.container.type ?? importURL.pathExtension.uppercased(), byteSize: sourceBytes, appendedParts: appendedParts))
                 if let m = openedMount { isoMounts[sourceID] = m; openedMount = nil }
                 var added: [MediaTrack] = []
                 for t in supported {
@@ -190,6 +192,7 @@ import UniformTypeIdentifiers
             isoMounts[sources[index].id] = mount
             sources[index].url = mount.mediaURL
             sources[index].byteSize = mount.inputBytes
+            sources[index].appendedParts = mount.extraParts
         }
     }
     private func ensureQueueISOMounted(sources: inout [MediaSource]) async throws {
@@ -200,6 +203,7 @@ import UniformTypeIdentifiers
             queueISOMounts[sourceID] = mount
             sources[index].url = mount.mediaURL
             sources[index].byteSize = mount.inputBytes
+            sources[index].appendedParts = mount.extraParts
         }
     }
     func exportPanel() {

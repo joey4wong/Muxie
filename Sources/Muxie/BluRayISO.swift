@@ -7,7 +7,11 @@ struct BluRayMount: Sendable, Equatable {
     var isoURL: URL
     var mountPoint: URL
     var device: String
+    /// First clip of the main title. mkvmerge identifies this file; it must be a `.m2ts`, not the `.mpls` playlist:
+    /// given a playlist, mkvmerge reports only the video track and chapters, so audio and subtitles would be lost.
     var mediaURL: URL
+    /// The remaining clips of the main title, in playback order (appended to `mediaURL` with `+`).
+    var extraParts: [URL] = []
     var inputBytes: Int64
 }
 
@@ -29,7 +33,55 @@ enum BluRayISO {
             guard url.pathExtension.lowercased() == "mpls" else { return nil }
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
             return (url, size)
-        }.max(by: { $0.1 < $1.1 })?.0
+        }.max(by: { lhs, rhs in
+            // Longest running time wins; file size only breaks ties and covers playlists that cannot be parsed.
+            let l = playlistSeconds(lhs.0), r = playlistSeconds(rhs.0)
+            return l != r ? l < r : lhs.1 < rhs.1
+        })?.0
+    }
+
+    struct PlayItem: Equatable {
+        var clip: String
+        var seconds: Double
+    }
+
+    /// Reads the PlayItems of an MPLS file: clip name (5 digits) and running time (45 kHz ticks). Returns nil if it is not a playlist.
+    static func parsePlayItems(_ data: Data) -> [PlayItem]? {
+        let b = [UInt8](data)
+        guard b.count >= 12, Array(b[0..<4]) == Array("MPLS".utf8) else { return nil }
+        func u32(_ o: Int) -> Int { (Int(b[o]) << 24) | (Int(b[o + 1]) << 16) | (Int(b[o + 2]) << 8) | Int(b[o + 3]) }
+        func u16(_ o: Int) -> Int { (Int(b[o]) << 8) | Int(b[o + 1]) }
+        let start = u32(8)
+        guard start + 10 <= b.count else { return nil }
+        let count = u16(start + 6)
+        var p = start + 10
+        var items: [PlayItem] = []
+        for _ in 0..<count {
+            guard p + 22 <= b.count else { return nil }
+            let length = u16(p)
+            guard length >= 20, let clip = String(bytes: b[(p + 2)..<(p + 7)], encoding: .ascii) else { return nil }
+            let inTime = u32(p + 14), outTime = u32(p + 18)
+            items.append(PlayItem(clip: clip, seconds: Double(max(0, outTime - inTime)) / 45_000))
+            p += length + 2
+        }
+        return items.isEmpty ? nil : items
+    }
+
+    static func playlistSeconds(_ mpls: URL) -> Double {
+        guard let data = try? Data(contentsOf: mpls), let items = parsePlayItems(data) else { return 0 }
+        return items.reduce(0) { $0 + $1.seconds }
+    }
+
+    /// The `.m2ts` clips of the main title in playback order. Uses the main playlist when every clip it names exists and
+    /// no clip repeats (a repeat would need in/out trimming, which appending cannot do); otherwise the largest clip.
+    static func mainClips(under mount: URL) throws -> [URL] {
+        let stream = mount.appendingPathComponent("BDMV/STREAM", isDirectory: true)
+        if let mpls = try longestPlaylist(under: mount), let data = try? Data(contentsOf: mpls), let items = parsePlayItems(data) {
+            let urls = items.map { stream.appendingPathComponent($0.clip + ".m2ts") }
+            if Set(urls).count == urls.count, urls.allSatisfy({ fm.fileExists(atPath: $0.path) }) { return urls }
+        }
+        if let feature = try largestM2TS(under: mount) { return [feature.url] }
+        return []
     }
 
     static func attach(iso: URL) throws -> BluRayMount {
@@ -49,16 +101,12 @@ enum BluRayISO {
             break
         }
         let isoBytes = (try? iso.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-        let mediaURL: URL
-        if let mpls = try longestPlaylist(under: mountPoint) {
-            mediaURL = mpls
-        } else if let feature = try largestM2TS(under: mountPoint) {
-            mediaURL = feature.url
-        } else {
+        let clips = try mainClips(under: mountPoint)
+        guard let mediaURL = clips.first else {
             detachDevice(device)
             throw MuxError.message("No Blu-ray playlist or feature file was found on this disc image.")
         }
-        let mount = BluRayMount(isoURL: iso, mountPoint: mountPoint, device: device, mediaURL: mediaURL, inputBytes: isoBytes)
+        let mount = BluRayMount(isoURL: iso, mountPoint: mountPoint, device: device, mediaURL: mediaURL, extraParts: Array(clips.dropFirst()), inputBytes: isoBytes)
         remember(mount)
         return mount
     }
