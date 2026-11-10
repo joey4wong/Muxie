@@ -10,6 +10,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
     @MainActor static func main() async throws {
         let fixture = URL(fileURLWithPath: CommandLine.arguments[1])
         guard let engine = Engine.executable else { fatalError("Bundled mkvmerge missing") }
+        guard Engine.handbrakeExecutable != nil else { fatalError("Bundled HandBrakeCLI missing") }
         let fm = FileManager.default
         let run = fixture.appendingPathComponent("run-" + UUID().uuidString); try fm.createDirectory(at: run, withIntermediateDirectories: true)
         var results: [String] = []
@@ -111,6 +112,24 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         for track in noVideo { model.boolBinding(track.id, \.enabled).wrappedValue = false }
         try check(!model.canExport, "Export disabled when all video tracks excluded")
         try check((try Data(contentsOf: video)) == original, "Input bytes unchanged after all tests")
+        model.exportMode = .compress
+        model.compressQuality = .balanced
+        let compressedURL = run.appendingPathComponent("H.265 compress.mkv")
+        await model.export(to: compressedURL)
+        let compressedProbe = try Engine.identify(compressedURL, engine: engine)
+        let cv = compressedProbe.tracks.first { $0.type == "video" }!
+        try check((cv.codec.uppercased().contains("HEVC") || cv.codec.uppercased().contains("H.265")) && (cv.properties.pixel_dimensions.flatMap { Int($0.split(separator: "x").last ?? "") } ?? 9999) <= 1080, "Compress: HEVC output within 1080p")
+        try check(compressedProbe.tracks.filter { $0.type == "audio" }.allSatisfy { $0.codec.uppercased().contains("AAC") }, "Compress: audio is AAC")
+        try check(compressedProbe.tracks.filter { $0.type == "subtitles" }.count == 1, "Compress: subtitle track kept")
+        let compressCancelURL = run.appendingPathComponent("compress-cancelled.mkv")
+        let compressJob = RunningJob()
+        let compressWitness = ProgressWitness()
+        do {
+            _ = try Engine.exportCompressed(plan: ExportPlan(sources: model.sources, tracks: model.tracks), output: compressCancelURL, quality: .balanced, mkvmerge: engine, handbrake: Engine.handbrakeExecutable!, job: compressJob) { _ in compressWitness.mark(); compressJob.cancel() }
+            throw MuxError.message("Compress cancellation ignored")
+        } catch is CancellationError { }
+        try check(compressWitness.value && !fm.fileExists(atPath: compressCancelURL.path), "Compress cancellation removes partial output")
+        try check(CompressQuality.small.rf == 24 && CompressQuality.balanced.rf == 21 && CompressQuality.high.rf == 18, "Compress quality RF table")
         let bdmvRoot = fixture.appendingPathComponent("bdmv-title-fixture")
         let playlistDir = bdmvRoot.appendingPathComponent("BDMV/PLAYLIST", isDirectory: true)
         let streamDir = bdmvRoot.appendingPathComponent("BDMV/STREAM", isDirectory: true)

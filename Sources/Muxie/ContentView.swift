@@ -49,12 +49,35 @@ struct ContentView: View {
                                 .padding(.trailing, 14).padding(.top, 14).padding(.bottom, 8)
                         }
                     }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
-                    Button("Export") { model.exportPanel() }
-                        .font(.system(size: 13, weight: .semibold))
-                        .padding(.horizontal, 32).padding(.vertical, 7)
-                        .buttonStyle(NeutralGlassButtonStyle(compact: false))
-                        .disabled(!model.canExport)
-                        .frame(height: WorkspaceLayout.exportHeight)
+                    VStack(spacing: 8) {
+                        Picker("Export", selection: $model.exportMode) {
+                            ForEach(model.compressEligible ? ExportMode.allCases : [.remux]) { mode in
+                                Text(mode == .remux ? "Remux" : "Compress").tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 240)
+                        .disabled(model.busy)
+                        if model.exportMode == .compress && model.compressEligible {
+                            Picker("Quality", selection: $model.compressQuality) {
+                                ForEach(CompressQuality.allCases) { step in
+                                    Text(step.label).tag(step)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 320)
+                            .disabled(model.busy)
+                            Text("Audio converts to AAC.")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("Export") { model.exportPanel() }
+                            .font(.system(size: 13, weight: .semibold))
+                            .padding(.horizontal, 32).padding(.vertical, 7)
+                            .buttonStyle(NeutralGlassButtonStyle(compact: false))
+                            .disabled(!model.canExport)
+                    }
+                    .frame(height: WorkspaceLayout.exportHeight)
                     Group {
                         if model.exporting || model.importing || model.completed != nil { activityBar }
                         else { Color.clear }

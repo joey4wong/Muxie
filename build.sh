@@ -80,7 +80,7 @@ mkdir -p "$BIN" "$LIBS"
 cp "$MKVMERGE_SRC" "$BIN/mkvmerge"; chmod u+w "$BIN/mkvmerge"
 # MKVToolNix DMG SHA-256 from https://mkvtoolnix.download/macos/releases/103.0/MKVToolNix-103.0-1-arm64.dmg.sha256
 bundle_deps() {
-    local target="$1" dep base real mkv_libs
+    local target="$1" dep base real mkv_libs extra="${2:-}"
     mkv_libs="$(dirname "$MKVMERGE_SRC")/libs"
     while IFS= read -r dep; do
         case "$dep" in /usr/lib/*|/System/*|"") continue;; esac
@@ -88,14 +88,14 @@ bundle_deps() {
         if [[ ! -f "$LIBS/$base" ]]; then
             if [[ -f "$dep" ]]; then real="$dep"
             else
-                real="$(find "$mkv_libs" "$(dirname "$MKVMERGE_SRC")" "$(dirname "$MKVMERGE_SRC")/.." /opt/homebrew/lib /usr/local/lib -name "$base" \( -type f -o -type l \) 2>/dev/null | head -1 || true)"
+                real="$(find "$mkv_libs" $extra "$(dirname "$MKVMERGE_SRC")" "$(dirname "$MKVMERGE_SRC")/.." /opt/homebrew/lib /usr/local/lib -name "$base" \( -type f -o -type l \) 2>/dev/null | head -1 || true)"
             fi
             [[ -n "$real" && -e "$real" ]] || { echo "Bundling failed: non-system dependency $dep (from $target) is not in the app or MKVToolNix bundle." >&2; exit 1; }
             cp -L "$real" "$LIBS/$base"; chmod u+w "$LIBS/$base"
             install_name_tool -id "@loader_path/lib/$base" "$LIBS/$base" 2>/dev/null || true
             bundle_deps "$LIBS/$base"
         fi
-        if [[ "$target" == "$BIN/mkvmerge" ]]; then install_name_tool -change "$dep" "@executable_path/lib/$base" "$target"
+        if [[ "$target" == "$BIN/mkvmerge" || "$target" == "$BIN/HandBrakeCLI" ]]; then install_name_tool -change "$dep" "@executable_path/lib/$base" "$target"
         else install_name_tool -change "$dep" "@loader_path/$base" "$target"; fi
     done < <(otool -L "$target" | tail -n +2 | awk '{print $1}')
 }
@@ -103,6 +103,29 @@ bundle_deps "$BIN/mkvmerge"
 for f in "$LIBS"/*.dylib; do [[ -e "$f" ]] && "${SIGN[@]}" "$f"; done
 "${SIGN[@]}" "$BIN/mkvmerge"
 "$BIN/mkvmerge" --version
+
+# HandBrake CLI SHA-256 from https://handbrake.fr/checksums.php (HandBrakeCLI-1.11.2.dmg)
+HANDBRAKE_VERSION=1.11.2
+HANDBRAKE_SHA256=14463aa81038aaa3ce421dc6cee65fd6c82fdabda040931541ccca38939299fa
+HANDBRAKE_DMG="$ROOT/.build/HandBrakeCLI-$HANDBRAKE_VERSION.dmg"
+HANDBRAKE_SRC="${HANDBRAKE_BIN:-}"
+if [[ -z "$HANDBRAKE_SRC" ]]; then
+    if [[ ! -f "$HANDBRAKE_DMG" ]]; then
+        mkdir -p "$ROOT/.build"
+        curl -fsSL -o "$HANDBRAKE_DMG" "https://handbrake.fr/rotation.php?file=HandBrakeCLI-$HANDBRAKE_VERSION.dmg"
+    fi
+    ACTUAL="$(shasum -a 256 "$HANDBRAKE_DMG" | awk '{print $1}')"
+    if [[ "$ACTUAL" != "$HANDBRAKE_SHA256" ]]; then echo "HandBrake CLI checksum mismatch (got $ACTUAL)." >&2; rm -f "$HANDBRAKE_DMG"; exit 1; fi
+    HB_MNT="$(mktemp -d)"
+    hdiutil attach -nobrowse -readonly -mountpoint "$HB_MNT" "$HANDBRAKE_DMG" >/dev/null
+    HANDBRAKE_SRC="$(find "$HB_MNT" -name HandBrakeCLI \( -type f -o -type l \) 2>/dev/null | head -1 || true)"
+    hdiutil detach "$HB_MNT" >/dev/null
+    [[ -n "$HANDBRAKE_SRC" && -x "$HANDBRAKE_SRC" ]] || { echo "HandBrakeCLI not found in the DMG." >&2; exit 1; }
+fi
+cp "$HANDBRAKE_SRC" "$BIN/HandBrakeCLI"; chmod u+w "$BIN/HandBrakeCLI"
+bundle_deps "$BIN/HandBrakeCLI" "$(dirname "$HANDBRAKE_SRC")"
+"${SIGN[@]}" "$BIN/HandBrakeCLI"
+"$BIN/HandBrakeCLI" --version | head -1
 
 # Sign inside-out. Developer ID builds also get the hardened runtime and a secure timestamp.
 "${SIGN[@]}" "$FW/Versions/B/Autoupdate"

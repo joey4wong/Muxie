@@ -20,12 +20,19 @@ import UniformTypeIdentifiers
     @Published var filter = "All"
     @Published var trackPage = 0
     @Published var workspaceScreenHeight: CGFloat = 900
+    @Published var exportMode: ExportMode = .remux
+    @Published var compressQuality: CompressQuality = .balanced
+    @Published var compressEligible = true
     var job: RunningJob?
     private var isoMounts: [UUID: BluRayMount] = [:]
     var active: MediaTrack? { tracks.first { $0.id == selected } }
     var enabled: [MediaTrack] { tracks.filter(\.enabled) }
     var busy: Bool { importing || exporting }
-    var canExport: Bool { !busy && Engine.executable != nil && enabled.contains { $0.kind == "video" } }
+    var canExport: Bool {
+        guard !busy, Engine.executable != nil, enabled.contains(where: { $0.kind == "video" }) else { return false }
+        if exportMode == .compress { return compressEligible && Engine.handbrakeExecutable != nil }
+        return true
+    }
     var totalBytes: Int64 { sources.reduce(0) { $0 + $1.byteSize } }
     var filtered: [MediaTrack] { tracks.filter { filter == "All" || $0.filterName == filter } }
     var tracksPerPage: Int {
@@ -110,7 +117,23 @@ import UniformTypeIdentifiers
             }
         }
         importing = false
+        exportMode = .remux
+        compressQuality = .balanced
+        await refreshCompressEligibility()
         if !failures.isEmpty { fail(failures.joined(separator: "\n\n")) }
+    }
+    func refreshCompressEligibility() async {
+        guard let engine = Engine.executable, enabled.contains(where: { $0.kind == "video" }) else {
+            compressEligible = true
+            return
+        }
+        let tracks = tracks
+        let sources = sources
+        let already = (try? await Task.detached(priority: .utility) {
+            try Engine.videoAlreadyHEVC1080p(tracks, sources: sources, engine: engine)
+        }.value) ?? false
+        compressEligible = !already
+        if !compressEligible && exportMode == .compress { exportMode = .remux }
     }
     func binding(_ id: UUID, _ keyPath: WritableKeyPath<MediaTrack, String>) -> Binding<String> {
         Binding(get: { self.tracks.first { $0.id == id }?[keyPath: keyPath] ?? "" }, set: { value in
@@ -125,6 +148,7 @@ import UniformTypeIdentifiers
                 for index in self.tracks.indices where self.tracks[index].kind == kind { self.tracks[index].isDefault = false }
             }
             self.tracks[i][keyPath: keyPath] = value; self.completed = nil
+            if keyPath == \MediaTrack.enabled { Task { @MainActor in await self.refreshCompressEligibility() } }
         })
     }
     func removeSource(_ source: MediaSource) {
@@ -137,6 +161,7 @@ import UniformTypeIdentifiers
         guard !busy else { return }
         detachAllISO()
         sources = []; tracks = []; selected = nil; completed = nil; warning = nil; filter = "All"; trackPage = 0
+        exportMode = .remux; compressQuality = .balanced; compressEligible = true
     }
     func recoverStaleISOMounts() { BluRayISO.recoverStaleMounts(); isoMounts = [:] }
     func prepareForQuit() { detachAllISO() }
@@ -160,7 +185,13 @@ import UniformTypeIdentifiers
         // Default to the original name. Only when the source is itself an .mkv in the same folder (the output
         // cannot overwrite its own source) keep a suffix so the default is still exportable.
         let baseName = source.displayURL.deletingPathExtension().lastPathComponent
-        panel.nameFieldStringValue = source.displayURL.pathExtension.lowercased() == "mkv" ? baseName + "-muxie.mkv" : baseName + ".mkv"
+        if exportMode == .compress {
+            panel.nameFieldStringValue = baseName + "-compressed.mkv"
+        } else if source.displayURL.pathExtension.lowercased() == "mkv" {
+            panel.nameFieldStringValue = baseName + "-muxie.mkv"
+        } else {
+            panel.nameFieldStringValue = baseName + ".mkv"
+        }
         panel.directoryURL = source.displayURL.deletingLastPathComponent()
         panel.begin { [weak self] result in
             guard result == .OK, let url = panel.url else { return }
@@ -179,8 +210,17 @@ import UniformTypeIdentifiers
             if ExportActivity.shared.terminating { NSApp.reply(toApplicationShouldTerminate: true) }
         }
         do {
+            let mode = exportMode
+            let quality = compressQuality
+            let handbrake = Engine.handbrakeExecutable
             let warnings = try await Task.detached(priority: .userInitiated) { [weak self] in
-                try Engine.export(plan: plan, output: output, engine: engine, job: running) { [weak self] value in
+                if mode == .compress, let handbrake {
+                    try Engine.exportCompressed(plan: plan, output: output, quality: quality, mkvmerge: engine, handbrake: handbrake, job: running) { [weak self] value in
+                        Task { @MainActor in self?.progress = value }
+                    }
+                    return nil as String?
+                }
+                return try Engine.export(plan: plan, output: output, engine: engine, job: running) { [weak self] value in
                     Task { @MainActor in self?.progress = value }
                 }
             }.value

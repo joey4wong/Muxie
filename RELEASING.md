@@ -11,7 +11,7 @@ Muxie updates itself through Sparkle: **Muxie > Check for Updates…**. Checks a
 4. Commit and push, then create a GitHub release tagged `v<version>` and attach **both** files.
 5. Verify: `curl -sL https://github.com/joey4wong/Muxie/releases/latest/download/appcast.xml`, then run an older build and choose Check for Updates….
 
-The update archive includes the bundled mkvmerge (MKVToolNix); nothing else needs to be installed.
+The update archive includes the bundled mkvmerge (MKVToolNix) and HandBrakeCLI; nothing else needs to be installed. Expect a larger download than remux-only releases.
 
 ## The signing key
 

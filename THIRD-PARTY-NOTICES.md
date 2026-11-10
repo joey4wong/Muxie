@@ -17,3 +17,10 @@ Muxie.app embeds the `mkvmerge` command-line executable and its shared libraries
 Copyright Moritz Bunkus and other contributors. GPL-2.0-only; the license text ships at Contents/Resources/Licenses/GPL-2.0.txt.
 Bundled version: 103.0. Website: https://mkvtoolnix.download/ , corresponding source: https://codeberg.org/mbunkus/mkvtoolnix (tag `release-103.0`, matching `mkvmerge --version`). Muxie does not modify it.
 Bundled libraries keep their own licenses; their sources are available from their upstream projects.
+
+## HandBrake (bundled)
+
+Muxie.app embeds the `HandBrakeCLI` command-line executable and its shared libraries from HandBrake, in Contents/Resources/bin. Muxie runs it as a separate process for optional H.265/AAC compress export only (no fdk-aac).
+Copyright HandBrake Contributors. GPL-2.0; the license text ships at Contents/Resources/Licenses/GPL-2.0.txt.
+Bundled version: 1.11.2. Website: https://handbrake.fr/ , source: https://github.com/HandBrake/HandBrake (tag `1.11.2`).
+The DMG checksum is verified against https://handbrake.fr/checksums.php before use.

@@ -10,7 +10,7 @@ enum WorkspaceLayout {
     static let listInsets: CGFloat = 36
     static let filterGap: CGFloat = 12
     static let paginationHeight: CGFloat = 32
-    static let exportHeight: CGFloat = 92
+    static let exportHeight: CGFloat = 132
     static let activityHeight: CGFloat = 72
     static let chromeAllowance: CGFloat = 60
 

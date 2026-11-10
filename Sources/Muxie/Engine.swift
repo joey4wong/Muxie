@@ -95,6 +95,7 @@ final class RunningJob: @unchecked Sendable {
 enum Engine {
     static var candidates: [URL] {
         var paths: [String] = []
+        if let root = ProcessInfo.processInfo.environment["MUXIE_BIN_DIR"] { paths.append((root as NSString).appendingPathComponent("mkvmerge")) }
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("bin/mkvmerge").path { paths.append(bundled) }
         paths += ["/Applications/MKVToolNix.app/Contents/MacOS/mkvmerge", NSHomeDirectory() + "/Applications/MKVToolNix.app/Contents/MacOS/mkvmerge", "/opt/homebrew/bin/mkvmerge", "/usr/local/bin/mkvmerge"]
         return paths.map { URL(fileURLWithPath: $0) }
