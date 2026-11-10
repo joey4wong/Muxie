@@ -127,6 +127,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let compressedProbe = try Engine.identify(compressedURL, engine: engine)
         let cv = compressedProbe.tracks.first { $0.type == "video" }!
         try check((cv.codec.uppercased().contains("HEVC") || cv.codec.uppercased().contains("H.265")) && (cv.properties.pixel_dimensions.flatMap { Int($0.split(separator: "x").last ?? "") } ?? 9999) <= 1080, "Compress: HEVC output within 1080p")
+        try check(Engine.hevcBitDepth(fromCodecPrivate: cv.properties.codec_private_data) == 10, "Compress: HEVC 10-bit output")
         try check(compressedProbe.tracks.filter { $0.type == "audio" }.allSatisfy { $0.codec.uppercased().contains("AAC") }, "Compress: audio is AAC")
         try check(compressedProbe.tracks.filter { $0.type == "subtitles" }.count == 1, "Compress: subtitle track kept")
         try check(Engine.hevcBitDepth(fromCodecPrivate: "0102" + String(repeating: "00", count: 15) + "FAFA") == 10 && Engine.hevcBitDepth(fromCodecPrivate: "0101" + String(repeating: "00", count: 15) + "F8F8") == 8 && Engine.hevcBitDepth(fromCodecPrivate: nil) == nil && Engine.hevcBitDepth(fromCodecPrivate: "01") == nil, "HEVC bit depth is read from codec private data")
@@ -174,7 +175,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
             throw MuxError.message("Compress cancellation ignored")
         } catch is CancellationError { }
         try check(compressWitness.value && !fm.fileExists(atPath: compressCancelURL.path), "Compress cancellation removes partial output")
-        try check(CompressProfile(height: 1080).rf == 21 && CompressProfile(height: 2160).rf == 23 && CompressProfile(height: 2160).maxWidth == 3840, "Compress profile table")
+        try check(CompressProfile(height: 1080).quality == 65 && CompressProfile(height: 2160).quality == 60 && CompressProfile(height: 2160).maxWidth == 3840, "Compress profile table")
         try check(ExportMode.mux.label == "Mux" && ExportMode.compress.label == "Compress", "Export mode labels Mux and Compress")
         try check(
             CompressSettings.audioBitrateKbps(channelCount: 1) == 96
@@ -258,6 +259,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let hbArgs = Engine.handbrakeArguments(input: URL(fileURLWithPath: "/in.mkv"), output: URL(fileURLWithPath: "/out.mkv"), profile: CompressProfile(height: 1080), sourceAudioChannels: [2, 6, 8, 6], sourceAudioIsAAC: [true, false, false, true])
         func hbValue(_ flag: String) -> String? { hbArgs.firstIndex(of: flag).map { hbArgs[$0 + 1] } }
         try check(hbValue("--aencoder") == "copy:aac,av_aac,av_aac,copy:aac" && hbValue("--ab") == "192,384,384,384" && hbValue("--mixdown") == "stereo,none,5point1,none" && hbValue("--audio-fallback") == "av_aac", "Compress audio arguments: copy AAC, encode the rest, 7.1 at 384 kbps as 5.1")
+        try check(hbArgs.contains("vt_h265_10bit") && !hbArgs.contains("--encopts") && !hbArgs.contains("--encoder-preset"), "Compress video arguments use VideoToolbox H.265 10-bit without x265 options")
         func enqueueEnabled(_ model: AppModel, output: URL) {
             for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
             model.enqueueExport(to: output)

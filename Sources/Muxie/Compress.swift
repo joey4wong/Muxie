@@ -12,17 +12,16 @@ enum ExportMode: String, CaseIterable, Identifiable {
 enum CompressProfile {
     case hd, uhd
     init(height: Int) { self = height > 1080 ? .uhd : .hd }
-    var rf: Int { self == .uhd ? 23 : 21 }
+    /// HandBrake VideoToolbox quality (0–100, higher is better); tuned by the owner after real-file tests.
+    var quality: Int { self == .uhd ? 60 : 65 }
     var maxWidth: Int { self == .uhd ? 3840 : 1920 }
     var maxHeight: Int { self == .uhd ? 2160 : 1080 }
 }
 
 enum CompressSettings {
-    static let encoder = "x265_10bit"
-    static let encoderPreset = "medium"
+    static let encoder = "vt_h265_10bit"
+    /// Included when HandBrake lists main10 for vt_h265_10bit (`HandBrakeCLI --encoder-profile-list vt_h265_10bit`).
     static let encoderProfile = "main10"
-    // No tune: HandBrake's "None" means the option is omitted. Passing the word "none" makes x265 reject the preset.
-    static let extraOptions = "aq-mode=3:no-sao=1"
     /// HandBrake av_aac is treated as unable to carry 7.1; sources above 6 channels encode as 5.1 (owner to verify 7point1 on HandBrake 1.11.2).
     static let maxAACChannels = 6
 
@@ -95,10 +94,8 @@ extension Engine {
             "--output", output.path,
             "--format", "av_mkv",
             "--encoder", CompressSettings.encoder,
-            "--encoder-preset", CompressSettings.encoderPreset,
             "--encoder-profile", CompressSettings.encoderProfile,
-            "--encopts", CompressSettings.extraOptions,
-            "--quality", String(profile.rf),
+            "--quality", String(profile.quality),
             "--maxWidth", String(profile.maxWidth),
             "--maxHeight", String(profile.maxHeight),
             "--cfr",
@@ -153,11 +150,15 @@ extension Engine {
         let hbResult = try job.runHandBrake(engine: handbrake, arguments: hbArgs) { value in
             progress(0.12 + value * 0.88)
         }
-        guard hbResult.0 == 0 else { throw MuxError.message(String(decoding: hbResult.1, as: UTF8.self)) }
+        let hbLog = String(decoding: hbResult.1, as: UTF8.self)
+        if let encoderError = Self.handBrakeMissingEncoderMessage(in: hbLog) {
+            throw MuxError.message(encoderError)
+        }
+        guard hbResult.0 == 0 else { throw MuxError.message(hbLog) }
         if job.cancelled { throw CancellationError() }
         // HandBrakeCLI exits 0 even for an unknown option or a failed scan, so success is only trusted when the file exists.
         guard fm.fileExists(atPath: encodeStaging.path) else {
-            let tail = String(decoding: hbResult.1, as: UTF8.self).components(separatedBy: .newlines).suffix(6).joined(separator: "\n")
+            let tail = hbLog.components(separatedBy: .newlines).suffix(6).joined(separator: "\n")
             throw MuxError.message("HandBrake did not produce an output file.\n" + tail)
         }
         let probe = try identify(encodeStaging, engine: mkvmerge, job: job)
@@ -167,6 +168,9 @@ extension Engine {
         let vcodec = video.codec.uppercased()
         guard vcodec.contains("HEVC") || vcodec.contains("H.265") else {
             throw MuxError.message("Compressed output video codec verification failed.")
+        }
+        guard hevcBitDepth(fromCodecPrivate: video.properties.codec_private_data) == 10 else {
+            throw MuxError.message("Compressed output is not 10-bit.")
         }
         if let dims = video.properties.pixel_dimensions, let height = Int(dims.split(separator: "x").last ?? ""), height > profile.maxHeight {
             throw MuxError.message("Compressed output exceeds the target resolution.")
@@ -201,6 +205,13 @@ extension Engine {
         if job.cancelled { throw CancellationError() }
         try job.commit { try fm.moveItem(at: encodeStaging, to: output) }
         return subtitleWarning
+    }
+
+    /// One-line error when HandBrake does not offer the VideoToolbox H.265 10-bit encoder.
+    static func handBrakeMissingEncoderMessage(in log: String) -> String? {
+        let upper = log.uppercased()
+        guard upper.contains("INVALID VIDEO ENCODER") || upper.contains("UNKNOWN ENCODER") else { return nil }
+        return "HandBrake does not support the Apple VideoToolbox H.265 10-bit encoder (vt_h265_10bit)."
     }
 }
 
