@@ -8,31 +8,21 @@ enum ExportMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-enum CompressQuality: String, CaseIterable, Identifiable {
-    case small, balanced, high
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .small: return "Small"
-        case .balanced: return "Balanced"
-        case .high: return "High"
-        }
-    }
-    var rf: Int {
-        switch self {
-        case .small: return 24
-        case .balanced: return 21
-        case .high: return 18
-        }
-    }
+enum CompressProfile {
+    case hd, uhd
+    init(height: Int) { self = height > 1080 ? .uhd : .hd }
+    var rf: Int { self == .uhd ? 23 : 21 }
+    var maxWidth: Int { self == .uhd ? 3840 : 1920 }
+    var maxHeight: Int { self == .uhd ? 2160 : 1080 }
 }
 
 enum CompressSettings {
     static let encoder = "x265_10bit"
     static let encoderPreset = "medium"
     static let encoderProfile = "main10"
-    static let maxWidth = 1920
-    static let maxHeight = 1080
+    static let encoderTune = "none"
+    static let extraOptions = "aq-mode=3:no-sao=1"
+    static let audioBitrate = 192
 }
 
 extension Engine {
@@ -55,7 +45,7 @@ extension Engine {
         // mkvmerge names the codec "HEVC/H.265/MPEG-H" without a bit depth; the depth is in the hvcC record (codec_private_data).
         guard hevcBitDepth(fromCodecPrivate: vt.properties.codec_private_data) == 10 else { return false }
         guard let dims = vt.properties.pixel_dimensions, let height = Int(dims.split(separator: "x").last ?? "") else { return false }
-        return height <= CompressSettings.maxHeight
+        return height <= 1080
     }
 
     /// Luma bit depth from an HEVCDecoderConfigurationRecord given as hex (as mkvmerge prints it), or nil if it cannot be read.
@@ -72,33 +62,29 @@ extension Engine {
         return Int(bytes[17] & 7) + 8
     }
 
-    static func handbrakeArguments(input: URL, output: URL, quality: CompressQuality, audioBitrate: Int) -> [String] {
+    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile) -> [String] {
         [
             "--input", input.path,
             "--output", output.path,
             "--format", "av_mkv",
             "--encoder", CompressSettings.encoder,
             "--encoder-preset", CompressSettings.encoderPreset,
+            "--encoder-tune", CompressSettings.encoderTune,
             "--encoder-profile", CompressSettings.encoderProfile,
-            "--quality", String(quality.rf),
-            "--maxWidth", String(CompressSettings.maxWidth),
-            "--maxHeight", String(CompressSettings.maxHeight),
+            "--encopts", CompressSettings.extraOptions,
+            "--quality", String(profile.rf),
+            "--maxWidth", String(profile.maxWidth),
+            "--maxHeight", String(profile.maxHeight),
+            "--cfr",
             "--all-audio",
             "--aencoder", "av_aac",
-            "--ab", String(audioBitrate),
-            "--all-subtitles",
+            "--mixdown", "stereo",
+            "--ab", String(CompressSettings.audioBitrate),
+            "--subtitle", "none",
         ]
     }
 
-    static func audioBitrate(for tracks: [MediaTrack]) -> Int {
-        let channels = tracks.filter { $0.kind == "audio" }.map { track -> Int in
-            let digits = track.detail.filter(\.isNumber)
-            return Int(digits) ?? 2
-        }
-        return (channels.max() ?? 2) >= 6 ? 384 : 192
-    }
-
-    static func exportCompressed(plan: ExportPlan, output: URL, quality: CompressQuality, mkvmerge: URL, handbrake: URL, job: RunningJob, progress: @escaping @Sendable (Double) -> Void) throws -> String? {
+    static func exportCompressed(plan: ExportPlan, output: URL, mkvmerge: URL, handbrake: URL, job: RunningJob, progress: @escaping @Sendable (Double) -> Void) throws -> String? {
         let fm = FileManager.default
         let target = output.standardizedFileURL.resolvingSymlinksInPath()
         guard !plan.sources.contains(where: { $0.url.standardizedFileURL.resolvingSymlinksInPath() == target }) else {
@@ -123,8 +109,10 @@ extension Engine {
         }
         guard remuxResult.0 <= 1 else { throw MuxError.message(String(decoding: remuxResult.1, as: UTF8.self)) }
         if job.cancelled { throw CancellationError() }
-        let audioRate = audioBitrate(for: plan.orderedTracks)
-        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, quality: quality, audioBitrate: audioRate)
+        let remuxProbe = try identify(remuxStaging, engine: mkvmerge, job: job)
+        let sourceHeight = remuxProbe.tracks.first(where: { $0.type == "video" })?.properties.pixel_dimensions.flatMap { Int($0.split(separator: "x").last ?? "") } ?? 1080
+        let profile = CompressProfile(height: sourceHeight)
+        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile)
         let hbResult = try job.runHandBrake(engine: handbrake, arguments: hbArgs) { value in
             progress(0.12 + value * 0.88)
         }
@@ -143,8 +131,8 @@ extension Engine {
         guard vcodec.contains("HEVC") || vcodec.contains("H.265") else {
             throw MuxError.message("Compressed output video codec verification failed.")
         }
-        if let dims = video.properties.pixel_dimensions, let height = Int(dims.split(separator: "x").last ?? ""), height > CompressSettings.maxHeight {
-            throw MuxError.message("Compressed output exceeds 1080p.")
+        if let dims = video.properties.pixel_dimensions, let height = Int(dims.split(separator: "x").last ?? ""), height > profile.maxHeight {
+            throw MuxError.message("Compressed output exceeds the target resolution.")
         }
         let audioTracks = probe.tracks.filter { $0.type == "audio" }
         // A project may have every audio track unchecked; then a video-only output is correct.
@@ -152,9 +140,7 @@ extension Engine {
         guard (wantedAudio == 0 || !audioTracks.isEmpty), audioTracks.allSatisfy({ $0.codec.uppercased().contains("AAC") }) else {
             throw MuxError.message("Compressed output audio codec verification failed.")
         }
-        let wantedSubs = plan.orderedTracks.filter { $0.kind == "subtitles" }.count
-        let actualSubs = probe.tracks.filter { $0.type == "subtitles" }.count
-        guard actualSubs == wantedSubs else { throw MuxError.message("Compressed output subtitle count verification failed.") }
+        guard !probe.tracks.contains(where: { $0.type == "subtitles" }) else { throw MuxError.message("Compressed output still contains subtitles.") }
         if job.cancelled { throw CancellationError() }
         try job.commit { try fm.moveItem(at: encodeStaging, to: output) }
         return nil

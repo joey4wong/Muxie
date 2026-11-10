@@ -118,7 +118,6 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         for track in compressModel.tracks { compressModel.boolBinding(track.id, \.enabled).wrappedValue = true }
         try check(compressModel.compressEligible && compressModel.canExport, "Compress is available for an H.264 source")
         compressModel.exportMode = .compress
-        compressModel.compressQuality = .balanced
         let compressedURL = run.appendingPathComponent("H.265 compress.mkv")
         await compressModel.export(to: compressedURL)
         if !fm.fileExists(atPath: compressedURL.path) { throw MuxError.message("Compress failed: " + (compressModel.error ?? "no error reported")) }
@@ -127,7 +126,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let cv = compressedProbe.tracks.first { $0.type == "video" }!
         try check((cv.codec.uppercased().contains("HEVC") || cv.codec.uppercased().contains("H.265")) && (cv.properties.pixel_dimensions.flatMap { Int($0.split(separator: "x").last ?? "") } ?? 9999) <= 1080, "Compress: HEVC output within 1080p")
         try check(compressedProbe.tracks.filter { $0.type == "audio" }.allSatisfy { $0.codec.uppercased().contains("AAC") }, "Compress: audio is AAC")
-        try check(compressedProbe.tracks.filter { $0.type == "subtitles" }.count == 1, "Compress: subtitle track kept")
+        try check(compressedProbe.tracks.filter { $0.type == "subtitles" }.isEmpty, "Compress: subtitles dropped")
         try check(Engine.hevcBitDepth(fromCodecPrivate: "0102" + String(repeating: "00", count: 15) + "FAFA") == 10 && Engine.hevcBitDepth(fromCodecPrivate: "0101" + String(repeating: "00", count: 15) + "F8F8") == 8 && Engine.hevcBitDepth(fromCodecPrivate: nil) == nil && Engine.hevcBitDepth(fromCodecPrivate: "01") == nil, "HEVC bit depth is read from codec private data")
         // The file just produced is HEVC 10-bit <= 1080p, so compressing it again must not be offered.
         let again = AppModel()
@@ -148,11 +147,11 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let compressJob = RunningJob()
         let compressWitness = ProgressWitness()
         do {
-            _ = try Engine.exportCompressed(plan: ExportPlan(sources: compressModel.sources, tracks: compressModel.tracks), output: compressCancelURL, quality: .balanced, mkvmerge: engine, handbrake: Engine.handbrakeExecutable!, job: compressJob) { _ in compressWitness.mark(); compressJob.cancel() }
+            _ = try Engine.exportCompressed(plan: ExportPlan(sources: compressModel.sources, tracks: compressModel.tracks), output: compressCancelURL, mkvmerge: engine, handbrake: Engine.handbrakeExecutable!, job: compressJob) { _ in compressWitness.mark(); compressJob.cancel() }
             throw MuxError.message("Compress cancellation ignored")
         } catch is CancellationError { }
         try check(compressWitness.value && !fm.fileExists(atPath: compressCancelURL.path), "Compress cancellation removes partial output")
-        try check(CompressQuality.small.rf == 24 && CompressQuality.balanced.rf == 21 && CompressQuality.high.rf == 18, "Compress quality RF table")
+        try check(CompressProfile(height: 1080).rf == 21 && CompressProfile(height: 2160).rf == 23 && CompressProfile(height: 2160).maxWidth == 3840, "Compress profile table")
         let bdmvRoot = fixture.appendingPathComponent("bdmv-title-fixture")
         let playlistDir = bdmvRoot.appendingPathComponent("BDMV/PLAYLIST", isDirectory: true)
         let streamDir = bdmvRoot.appendingPathComponent("BDMV/STREAM", isDirectory: true)

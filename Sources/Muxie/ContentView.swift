@@ -59,15 +59,7 @@ struct ContentView: View {
                         .frame(maxWidth: 240)
                         .disabled(model.busy)
                         if model.exportMode == .compress && model.compressEligible {
-                            Picker("Quality", selection: $model.compressQuality) {
-                                ForEach(CompressQuality.allCases) { step in
-                                    Text(step.label).tag(step)
-                                }
-                            }
-                            .pickerStyle(.segmented).labelsHidden()
-                            .frame(maxWidth: 320)
-                            .disabled(model.busy)
-                            Text("Audio converts to AAC.")
+                            Text("Audio converts to AAC stereo. Subtitles are dropped.")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }

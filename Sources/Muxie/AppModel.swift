@@ -21,7 +21,6 @@ import UniformTypeIdentifiers
     @Published var trackPage = 0
     @Published var workspaceScreenHeight: CGFloat = 900
     @Published var exportMode: ExportMode = .remux
-    @Published var compressQuality: CompressQuality = .balanced
     @Published var compressEligible = true
     var job: RunningJob?
     private var isoMounts: [UUID: BluRayMount] = [:]
@@ -118,7 +117,6 @@ import UniformTypeIdentifiers
         }
         importing = false
         exportMode = .remux
-        compressQuality = .balanced
         await refreshCompressEligibility()
         if !failures.isEmpty { fail(failures.joined(separator: "\n\n")) }
     }
@@ -161,7 +159,7 @@ import UniformTypeIdentifiers
         guard !busy else { return }
         detachAllISO()
         sources = []; tracks = []; selected = nil; completed = nil; warning = nil; filter = "All"; trackPage = 0
-        exportMode = .remux; compressQuality = .balanced; compressEligible = true
+        exportMode = .remux; compressEligible = true
     }
     func recoverStaleISOMounts() { BluRayISO.recoverStaleMounts(); isoMounts = [:] }
     func prepareForQuit() { detachAllISO() }
@@ -211,11 +209,10 @@ import UniformTypeIdentifiers
         }
         do {
             let mode = exportMode
-            let quality = compressQuality
             let handbrake = Engine.handbrakeExecutable
             let warnings = try await Task.detached(priority: .userInitiated) { [weak self] in
                 if mode == .compress, let handbrake {
-                    _ = try Engine.exportCompressed(plan: plan, output: output, quality: quality, mkvmerge: engine, handbrake: handbrake, job: running) { [weak self] value in
+                    _ = try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running) { [weak self] value in
                         Task { @MainActor in self?.progress = value }
                     }
                     return nil as String?
