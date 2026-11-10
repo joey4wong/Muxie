@@ -4,22 +4,49 @@ A native Mac app for choosing which video, audio and subtitle tracks go into an 
 
 Source: https://github.com/joey4wong/Muxie
 
+## Features
+
+- **Track editor for MKV.** Open a video, add audio from another file, add SRT subtitle tracks or tracks from another video, choose which tracks go in, and edit each track's name, language, default flag and forced flag.
+- **Mux (lossless).** Copies tracks into a new MKV without re-encoding. Chapters, tags and attachments from the first file are kept, plus subtitle fonts from added files. Subtitles stay soft subtitles.
+- **Compress.** Re-encodes video to H.265 10-bit to make large files (for example a 22 to 30 GB Blu-ray) much smaller. Pick the encoder in the **Encoder** menu in the window toolbar (shown when Compress is selected; also in **Settings**, Cmd+,):
+  - **Hardware (Apple VideoToolbox):** the default; uses the Mac's media engine.
+  - **x265 (software):** slower, usually the smallest files and the best detail and film grain.
+  - 1080p sources stay 1080p and 4K stay 4K, constant frame rate, black bars kept, HDR10 preserved. Every checked audio track becomes AAC with the same channel layout (mono 96 kbps, stereo 192 kbps, 3 to 6 channels 384 kbps; 7.1 becomes 5.1). AAC tracks up to 5.1 are copied as they are. Checked subtitles are kept.
+  - Compress is hidden when the video is already HEVC 10-bit at 1080p or below.
+- **Blu-ray ISO.** Drop a Blu-ray `.iso`; Muxie mounts it and uses the main feature (the largest playlist).
+- **Export queue.** Queue several exports and watch their progress at the top of the main window.
+- **Safe by design.** Originals are never modified and existing files are never overwritten. Muxie prevents idle system sleep while exporting. No decryption or DRM handling.
+- **Updates.** **Muxie > Check for Updates…** (manual only).
+
+## How to use
+
+1. Open a video (**File > Open Video…**, Cmd+O, or drop it into the window). A Blu-ray ISO works too.
+2. Add tracks with **Add Tracks** (an audio file, a subtitle file or another video). Imported tracks start unchecked.
+3. Check the tracks to include. Click a row to edit its name, language, default and forced flags.
+4. Choose **Mux** or **Compress** with the switch above the Export button. For Compress, pick **Hardware** or **x265** in the toolbar **Encoder** menu.
+5. Click **Export** (Cmd+E) and choose a new filename. Exports are queued and run one after another; you can keep adding jobs.
+
+Unnamed tracks are labeled Video / Audio / Subtitle (numbered per type when there are several); these labels are not written into the file.
+
 ## Requirements
 
-Nothing else needs to be installed: Muxie.app contains its own copies of `mkvmerge` ([MKVToolNix](https://mkvtoolnix.download/)) and `HandBrakeCLI` ([HandBrake](https://handbrake.fr/)) in `Contents/Resources/bin`. If a bundled tool is missing, Muxie falls back to an installed copy in `/Applications`, `~/Applications` or Homebrew where applicable.
+macOS 26 or later, Apple Silicon. Nothing else needs to be installed: Muxie.app contains its own copies of `mkvmerge` and `HandBrakeCLI` in `Contents/Resources/bin`.
 
-## Use
+## Open-source software Muxie builds on
 
-1. Open a video, or drop it into the window.
-2. Add tracks from an audio file, a subtitle file or another video. Imported tracks start unchecked, and no row is focused.
-3. Check the tracks to include. Click a row to edit its name, language, default and forced flags.
-4. Choose **Mux** or **Compress**, then click **Export** and save to a new filename. Originals are never modified, and existing files are never overwritten.
+| Project | Used for | License |
+| --- | --- | --- |
+| [MKVToolNix](https://mkvtoolnix.download/) (`mkvmerge`) | Reading tracks and writing the MKV in Mux mode | GPL-2.0 |
+| [HandBrake](https://handbrake.fr/) (`HandBrakeCLI`) | Compress: video and audio re-encoding | GPL-2.0 |
+| [x265](https://www.x265.org/) (inside HandBrake) | Software H.265 encoder | GPL-2.0 |
+| Apple VideoToolbox | Hardware H.265 encoder (system framework, reached through HandBrake) | Apple system API |
+| [Sparkle](https://sparkle-project.org/) | In-app update checks | MIT |
 
-**Mux** copies tracks without re-encoding. **Compress** re-encodes video with Apple VideoToolbox H.265 10-bit (hardware) (1080p sources stay 1080p, 4K sources stay 4K, constant frame rate; black bars are kept and HDR10 is preserved) and every checked audio track to AAC with the same channel layout (mono 96 kbps, stereo 192 kbps, 3–6 ch 384 kbps; 7.1 becomes 5.1 at 384 kbps). Tracks that are already AAC (up to 5.1) are copied as they are; all checked subtitles are kept. Compress is hidden when the video is already HEVC 10-bit at 1080p or below. No decryption, mixing or DRM handling. External audio becomes a separate selectable track. Subtitles stay soft subtitles. Chapters, tags and attachments from the first file are kept; subtitle fonts from added files are kept too.
+MKVToolNix and HandBrake run as separate processes. Muxie is independent and is not an official MKVToolNix or HandBrake product. Versions, sources and license texts are in `THIRD-PARTY-NOTICES.md`.
 
-While an export is running, Muxie prevents idle system sleep (the display may still sleep). Closing the lid still puts the Mac to sleep.
+## Help and contact
 
-Unnamed tracks are labeled Video / Audio / Subtitle (numbered per type when there are several); these labels are not written into the file. The window's minimum height grows with the track count, so every row stays visible without a scroller. Only if the rows cannot fit on the display are they paginated.
+There is no separate help manual. For questions or problems, use **Help > Contact Developer** in the app (opens this repository), or open an issue on GitHub.
 
 ## Updates
 

@@ -24,3 +24,8 @@ Muxie.app embeds the `HandBrakeCLI` command-line executable and its shared libra
 Copyright HandBrake Contributors. GPL-2.0; the license text ships at Contents/Resources/Licenses/GPL-2.0.txt.
 Bundled version: 1.11.2. Website: https://handbrake.fr/ , source: https://github.com/HandBrake/HandBrake (tag `1.11.2`).
 The DMG checksum is verified against https://handbrake.fr/checksums.php before use.
+
+## x265 (inside HandBrake)
+
+The bundled HandBrakeCLI includes the x265 H.265 software encoder, used when "x265" is chosen as the Compress encoder. Website: https://www.x265.org/ , source: https://bitbucket.org/multicoreware/x265_git . License: GPL-2.0.
+The hardware encoder option uses Apple's VideoToolbox framework, which is part of macOS and is not redistributed.
