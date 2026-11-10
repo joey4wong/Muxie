@@ -20,7 +20,7 @@ enum CompressSettings {
     static let encoder = "x265_10bit"
     static let encoderPreset = "medium"
     static let encoderProfile = "main10"
-    static let encoderTune = "none"
+    // No tune: HandBrake's "None" means the option is omitted. Passing the word "none" makes x265 reject the preset.
     static let extraOptions = "aq-mode=3:no-sao=1"
     static let audioBitrate = 192
 }
@@ -69,7 +69,6 @@ extension Engine {
             "--format", "av_mkv",
             "--encoder", CompressSettings.encoder,
             "--encoder-preset", CompressSettings.encoderPreset,
-            "--encoder-tune", CompressSettings.encoderTune,
             "--encoder-profile", CompressSettings.encoderProfile,
             "--encopts", CompressSettings.extraOptions,
             "--quality", String(profile.rf),
