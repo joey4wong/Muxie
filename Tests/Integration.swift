@@ -9,7 +9,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
 @main struct IntegrationTests {
     @MainActor static func main() async throws {
         let fixture = URL(fileURLWithPath: CommandLine.arguments[1])
-        guard let engine = Engine.executable else { fatalError("MKVToolNix missing") }
+        guard let engine = Engine.executable else { fatalError("Bundled mkvmerge missing") }
         let fm = FileManager.default
         let run = fixture.appendingPathComponent("run-" + UUID().uuidString); try fm.createDirectory(at: run, withIntermediateDirectories: true)
         var results: [String] = []
@@ -27,7 +27,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: projectFolder.appendingPathComponent("Support/Info.plist")), format: nil) as? [String: Any] ?? [:]
         let feedURL = (plist["SUFeedURL"] as? String).flatMap(URL.init(string:))
         try check(feedURL?.scheme == "https" && (plist["SUPublicEDKey"] as? String)?.count == 44 && Int((plist["CFBundleVersion"] as? String) ?? "") != nil && plist["SUEnableAutomaticChecks"] as? Bool == false && plist["SUVerifyUpdateBeforeExtraction"] as? Bool == true, "Update settings: HTTPS feed, EdDSA public key, integer build, manual checks only, verify before extraction")
-        try check(!runtimeText.contains("Engine/mkvmerge"), "App does not look for a bundled engine")
+        try check(engine.path.hasSuffix("/bin/mkvmerge") && !engine.path.hasPrefix("/Applications/") && !engine.path.contains("/opt/homebrew"), "Bundled mkvmerge is preferred over any installed MKVToolNix")
         let video = fixture.appendingPathComponent("测试影片 sample.mp4")
         let original = try Data(contentsOf: video)
         let model = AppModel()

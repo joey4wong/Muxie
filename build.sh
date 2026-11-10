@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds dist/Muxie.app: Muxie + the Sparkle updater framework. mkvmerge is NOT bundled.
+# Builds dist/Muxie.app: Muxie + the Sparkle updater framework. mkvmerge is bundled.
+# mkvmerge comes from the checksum-verified official MKVToolNix release (override with MKVMERGE_BIN).
 # Env: OUT_DIR (default ./dist), SIGN_IDENTITY (default "-" = ad-hoc).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -52,9 +53,54 @@ ditto "$SPARKLE_DIR/Sparkle.framework" "$FW"
 rm -rf "$FW/Versions/B/XPCServices" "$FW/XPCServices"
 find "$FW/Versions/B/Resources" -maxdepth 1 -name '*.lproj' ! -name 'en.lproj' ! -name 'Base.lproj' -exec rm -rf {} +
 
-# Sign inside-out. Developer ID builds also get the hardened runtime and a secure timestamp.
 if [[ "$SIGN_IDENTITY" == "-" ]]; then SIGN=(codesign --force --sign - --timestamp=none)
 else SIGN=(codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime); fi
+MKVTOOLNIX_VERSION=101.0
+MKVTOOLNIX_SHA256=12f7b200d1bc64db16933b55f2c3ce47fdbe4a88878e2e6aa26b702424eac1f0
+MKVTOOLNIX_DMG="$ROOT/.build/MKVToolNix-$MKVTOOLNIX_VERSION-1-arm64.dmg"
+MKVMERGE_SRC="${MKVMERGE_BIN:-}"
+if [[ -z "$MKVMERGE_SRC" ]]; then
+    if [[ ! -f "$MKVTOOLNIX_DMG" ]]; then
+        mkdir -p "$ROOT/.build"
+        curl -fsSL -o "$MKVTOOLNIX_DMG" "https://mkvtoolnix.download/macos/releases/$MKVTOOLNIX_VERSION/MKVToolNix-$MKVTOOLNIX_VERSION-1-arm64.dmg"
+    fi
+    ACTUAL="$(shasum -a 256 "$MKVTOOLNIX_DMG" | awk '{print $1}')"
+    if [[ "$ACTUAL" != "$MKVTOOLNIX_SHA256" ]]; then echo "MKVToolNix checksum mismatch (got $ACTUAL)." >&2; rm -f "$MKVTOOLNIX_DMG"; exit 1; fi
+    MNT="$(mktemp -d)"; MKV_COPY="$ROOT/.build/MKVToolNix-$MKVTOOLNIX_VERSION"
+    rm -rf "$MKV_COPY"; mkdir -p "$MKV_COPY"
+    hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$MKVTOOLNIX_DMG" >/dev/null
+    ditto "$MNT"/MKVToolNix*.app "$MKV_COPY/MKVToolNix.app"
+    hdiutil detach "$MNT" >/dev/null
+    xattr -dr com.apple.quarantine "$MKV_COPY" 2>/dev/null || true
+    MKVMERGE_SRC="$MKV_COPY/MKVToolNix.app/Contents/MacOS/mkvmerge"
+fi
+[[ -x "$MKVMERGE_SRC" ]] || { echo "mkvmerge not found: $MKVMERGE_SRC" >&2; exit 1; }
+BIN="$APP/Contents/Resources/bin"; LIBS="$APP/Contents/Resources/bin/lib"
+mkdir -p "$BIN" "$LIBS"
+cp "$MKVMERGE_SRC" "$BIN/mkvmerge"; chmod u+w "$BIN/mkvmerge"
+bundle_deps() {
+    local target="$1" dep base
+    while IFS= read -r dep; do
+        case "$dep" in /usr/lib/*|/System/*|"") continue;; esac
+        base="$(basename "$dep")"
+        if [[ ! -f "$LIBS/$base" ]]; then
+            local real="$dep"
+            [[ "$dep" == @rpath/* || "$dep" == @loader_path/* || "$dep" == @executable_path/* ]] && real="$(find "$(dirname "$MKVMERGE_SRC")/libs" "$(dirname "$MKVMERGE_SRC")/.." "$(dirname "$MKVMERGE_SRC")" /opt/homebrew/lib /usr/local/lib /opt/homebrew/opt -name "$base" \( -type f -o -type l \) 2>/dev/null | head -1 || true)"
+            [[ -f "$real" ]] || { echo "Cannot locate dependency $dep" >&2; exit 1; }
+            cp -L "$real" "$LIBS/$base"; chmod u+w "$LIBS/$base"
+            install_name_tool -id "@loader_path/lib/$base" "$LIBS/$base" 2>/dev/null || true
+            bundle_deps "$LIBS/$base"
+        fi
+        if [[ "$target" == "$BIN/mkvmerge" ]]; then install_name_tool -change "$dep" "@executable_path/lib/$base" "$target"
+        else install_name_tool -change "$dep" "@loader_path/$base" "$target"; fi
+    done < <(otool -L "$target" | tail -n +2 | awk '{print $1}')
+}
+bundle_deps "$BIN/mkvmerge"
+for f in "$LIBS"/*.dylib; do [[ -e "$f" ]] && "${SIGN[@]}" "$f"; done
+"${SIGN[@]}" "$BIN/mkvmerge"
+"$BIN/mkvmerge" --version
+
+# Sign inside-out. Developer ID builds also get the hardened runtime and a secure timestamp.
 "${SIGN[@]}" "$FW/Versions/B/Autoupdate"
 "${SIGN[@]}" "$FW/Versions/B/Updater.app"
 "${SIGN[@]}" "$FW"
