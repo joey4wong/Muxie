@@ -46,7 +46,7 @@ struct ContentView: View {
                         if model.active != nil && !compactInspector {
                             inspector.frame(width: 238)
                                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
-                                .padding(.trailing, 14).padding(.top, 14).padding(.bottom, 8)
+                                .padding(.trailing, 14).padding(.top, 19).padding(.bottom, 8)
                         }
                     }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
                     VStack(spacing: 8) {
