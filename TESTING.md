@@ -159,3 +159,14 @@ Speed and quality, 60 s of a 1080p H.264 film (grainy 1968 source), MacBook Air 
 | VideoToolbox quality 65 (Fast) | 9.1 s | 32.7 MB | 76.1 |
 | VideoToolbox + hardware decoding | 7.9 s, CPU 31.9 s -> 3.1 s | 32.0 MB | 76.1 |
 x265 timings vary with heat on the fanless Air. Hardware decoding gives x265 bit-identical output and no gain, so it is used for Fast only. Remux into the HandBrake input runs at about 240 MB/s on an external SSD (about 95 s for 22.7 GB), so staging on the internal disk or skipping the remux was not worth the risk.
+
+## Version 1.15.1 (build 45): 2026-11-11
+
+Environment: Apple M4 (MacBook Air), macOS 27.3, HandBrakeCLI 1.11.2 and mkvmerge 103.0 as bundled.
+
+`test.sh`: 91 checks; the new ones cover the HandBrake progress scanner (partial lines, `\r` endings, newest line per chunk, unfinished last line) and the log tail buffer (size cap, a character split across chunks).
+
+What this release changes is Muxie's own CPU use during Compress (HandBrake itself is unchanged). A `sample` of 1.15.0 during an x265 encode showed Muxie at 9 to 16% of one core.
+- HandBrake output is read as bytes. The old code recounted and rebuilt a 64 KB String for every chunk. Same simulated stream (23 000 chunks): 9.65 s of CPU before, 0.87 s after, with identical parsed progress and log tail. End to end (60 s clip, Chinese file name, whole Compress run, Muxie's own CPU): 1.34 s before, 1.14 s after, about 0.5% of one core either way. So this is a cleanup that mattered much less than the sample suggested.
+- Charging bar in the queue: redraws 24 times per second instead of 60 (counted: 60.0 to 24.0 body evaluations per second) and not at all while every Muxie window is hidden or covered. Measured in a test window with only the bar: 3.9% to 3.2% of one core (static bar: 0.0%). Removing the glow shadow or switching the schedule to a fixed timer made no further difference; CPU time per frame rises as the frame rate drops, so the saving is smaller than the frame count suggests.
+- Not measured: the whole app window during an encode, and the hidden-window case.

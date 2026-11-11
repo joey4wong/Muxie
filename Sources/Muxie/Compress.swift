@@ -298,18 +298,50 @@ extension Engine {
     }
 }
 
-private final class LogTailBuffer: @unchecked Sendable {
+/// The last `limit` bytes of HandBrake's output, kept for error messages. Works on bytes: counting or slicing a large
+/// String is linear in its length (and slower still with non-ASCII text such as a Chinese file name), and this is called
+/// for every chunk HandBrake prints.
+final class LogTailBuffer: @unchecked Sendable {
     private let limit: Int
-    private var storage = ""
+    private var storage = Data()
     private let lock = NSLock()
     init(limit: Int = 65_536) { self.limit = limit }
-    func append(_ text: String) {
+    func append(_ data: Data) {
         lock.lock()
-        storage += text
-        if storage.count > limit { storage = String(storage.suffix(limit)) }
+        storage.append(data)
+        if storage.count > limit * 2 { storage = Data(storage.suffix(limit)) }
         lock.unlock()
     }
-    var text: String { lock.lock(); defer { lock.unlock() }; return storage }
+    var text: String { lock.lock(); defer { lock.unlock() }; return String(decoding: storage.suffix(limit), as: UTF8.self) }
+}
+
+/// Finds HandBrake's newest "Encoding: ..." progress line in its raw output without decoding the whole stream.
+/// HandBrake ends progress lines with \r and others with \n; only the newest progress line of a chunk matters.
+struct HandBrakeProgressScanner {
+    private var pending = Data()
+    private static let marker = Data("Encoding:".utf8)
+
+    /// Adds output bytes; returns the newest complete progress line they finished, if any.
+    mutating func feed(_ data: Data) -> String? {
+        pending.append(data)
+        guard let lastBreak = pending.lastIndex(where: { $0 == 0x0A || $0 == 0x0D }) else {
+            if pending.count > 8_192 { pending.removeAll(keepingCapacity: true) }
+            return nil
+        }
+        let complete = pending[pending.startIndex..<lastBreak]
+        let rest = Data(pending[(lastBreak + 1)...])
+        defer { pending = rest }
+        for line in complete.split(whereSeparator: { $0 == 0x0A || $0 == 0x0D }).reversed() where line.range(of: Self.marker) != nil {
+            return String(decoding: line, as: UTF8.self)
+        }
+        return nil
+    }
+
+    /// The unfinished last line when the stream ends.
+    mutating func finish() -> String? {
+        defer { pending.removeAll() }
+        return pending.range(of: Self.marker) != nil ? String(decoding: pending, as: UTF8.self) : nil
+    }
 }
 
 extension RunningJob {
@@ -328,35 +360,25 @@ extension RunningJob {
         if wasCancelled { lock.unlock(); throw CancellationError() }
         do { try p.run(); process = p; if isPaused { kill(p.processIdentifier, SIGSTOP) }; lock.unlock() } catch { lock.unlock(); throw error }
         let log = LogTailBuffer()
-        var errPending = ""
         let readGroup = DispatchGroup()
         readGroup.enter()
         DispatchQueue.global(qos: .utility).async {
-            while true {
-                let data = errPipe.fileHandleForReading.availableData
-                if data.isEmpty { break }
-                let chunk = String(decoding: data, as: UTF8.self)
-                log.append(chunk)
-                errPending += chunk
-                let lines = errPending.components(separatedBy: .newlines)
-                errPending = lines.last ?? ""
-                for line in lines.dropLast() {
-                    if let parsed = Engine.parseHandBrakeEncodingLine(line) {
-                        var update = JobProgress.fraction(min(1, max(0, parsed.percent / 100)))
-                        update.phase = .encode
-                        update.fps = parsed.avgFPS ?? parsed.fps
-                        update.etaSeconds = parsed.etaSeconds
-                        progress(update)
-                    }
-                }
-            }
-            if let parsed = Engine.parseHandBrakeEncodingLine(errPending) {
+            func report(_ line: String) {
+                guard let parsed = Engine.parseHandBrakeEncodingLine(line) else { return }
                 var update = JobProgress.fraction(min(1, max(0, parsed.percent / 100)))
                 update.phase = .encode
                 update.fps = parsed.avgFPS ?? parsed.fps
                 update.etaSeconds = parsed.etaSeconds
                 progress(update)
             }
+            var scanner = HandBrakeProgressScanner()
+            while true {
+                let data = errPipe.fileHandleForReading.availableData
+                if data.isEmpty { break }
+                log.append(data)
+                if let line = scanner.feed(data) { report(line) }
+            }
+            if let line = scanner.finish() { report(line) }
             readGroup.leave()
         }
         p.waitUntilExit()

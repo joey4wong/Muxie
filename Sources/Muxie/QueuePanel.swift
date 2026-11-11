@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Yunyi Tang. See LICENSE.
 
 import SwiftUI
+import AppKit
 
 /// Export jobs listed at the top of the main window (running, queued and finished). Hidden when there are none.
 struct QueueStripView: View {
@@ -65,10 +66,16 @@ struct QueueStripView: View {
     }
 }
 
+/// Frame rate of the charging glow. The sweep and pulse are time based, so a lower rate only makes the glow slightly
+/// coarser; redrawing every display frame for a 6 pt bar kept the main thread and WindowServer busy for the whole encode.
+private let chargingFramesPerSecond = 24.0
+
 private struct ChargingBar: View {
     let progress: Double
     let animating: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// False while every Muxie window is hidden, minimised or fully covered: nobody can see the glow then.
+    @State private var windowVisible = NSApp.occlusionState.contains(.visible)
     var body: some View {
         GeometryReader { geo in
             let p = min(max(progress, 0), 1)
@@ -80,7 +87,7 @@ private struct ChargingBar: View {
                     .frame(width: fillWidth)
                     .overlay(alignment: .leading) {
                         if animating && !reduceMotion {
-                            TimelineView(.animation) { context in
+                            TimelineView(.animation(minimumInterval: 1 / chargingFramesPerSecond, paused: !windowVisible)) { context in
                                 let period = 1.6 - 1.0 * p
                                 let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
                                 let glow = max(fillWidth * 0.45, 16)
@@ -97,6 +104,9 @@ private struct ChargingBar: View {
                     .clipShape(Capsule())
                     .shadow(color: amber.opacity(animating ? 0.9 * p * p : 0), radius: 2 + 8 * p)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeOcclusionStateNotification)) { _ in
+            windowVisible = NSApp.occlusionState.contains(.visible)
         }
         .accessibilityElement()
         .accessibilityValue("\(Int(progress * 100)) percent")

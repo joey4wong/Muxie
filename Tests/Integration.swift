@@ -294,6 +294,18 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(hbArgs.contains("vt_h265_10bit") && hbArgs.contains("--subtitle") && hbValue("--subtitle") == "none" && !hbArgs.contains("--encopts") && hbValue("--encoder-preset") == "quality" && hbValue("--enable-hw-decoding") == "videotoolbox", "Compress video arguments use VideoToolbox H.265 10-bit with hardware decoding, without x265 options")
         let parsed = Engine.parseHandBrakeEncodingLine("Encoding: task 1 of 1, 12.50 % (120.5 fps, avg 118.2 fps, ETA 00h05m30s)")
         try check(parsed?.percent == 12.5 && parsed?.avgFPS == 118.2 && parsed?.etaSeconds == 330, "HandBrake encoding line parser")
+        // HandBrake output is read as bytes: progress lines end in \r, arrive split anywhere, and only the newest one per chunk matters.
+        func pct(_ line: String?) -> Double? { line.flatMap { Engine.parseHandBrakeEncodingLine($0)?.percent } }
+        var scan = HandBrakeProgressScanner()
+        try check(scan.feed(Data("Encoding: task 1 of 1, 10.00 % (5.0 fps, avg 5.0 fps, ETA 00h01m00s)".utf8)) == nil, "Progress scanner waits for the end of a line")
+        try check(pct(scan.feed(Data("\rEncoding: task 1 of 1, 11.00 % (5.0 fps, avg 5.0 fps, ETA 00h01m00s)\r".utf8))) == 11, "Progress scanner returns the newest line of a chunk")
+        try check(scan.feed(Data("Encoding: task 1 of 1, 12.".utf8)) == nil && pct(scan.feed(Data("50 % (5.0 fps, avg 5.0 fps, ETA 00h01m00s)\n".utf8))) == 12.5, "Progress scanner joins a line split between chunks")
+        try check(scan.feed(Data("x265 [info]: frame I:1\nscan: done\n".utf8)) == nil, "Progress scanner ignores other output")
+        _ = scan.feed(Data("Encoding: task 1 of 1, 99.00 % (5.0 fps, avg 5.0 fps, ETA 00h00m01s)".utf8))
+        try check(pct(scan.finish()) == 99, "Progress scanner returns an unfinished last line at the end")
+        let tail = LogTailBuffer(limit: 1_000)
+        tail.append(Data(String(repeating: "a", count: 50_000).utf8)); tail.append(Data("女".utf8.prefix(1))); tail.append(Data("女".utf8.dropFirst())); tail.append(Data("性END".utf8))
+        try check(tail.text.hasSuffix("女性END") && tail.text.utf8.count <= 1_000, "Log tail keeps the last bytes and a character split between chunks")
         let persisted = QueueJob.snapshot(sources: model.sources, tracks: model.tracks, mode: .mux, output: run.appendingPathComponent("persisted.mkv"))
         var store = PersistedQueue(jobs: [PersistedQueueJob(job: persisted, wasInterrupted: true)], hold: true, resumePending: true)
         let encodeData = try JSONEncoder().encode(store)
