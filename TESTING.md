@@ -137,3 +137,25 @@ Not verified:
 - Checking again from 1.4.0 opened a small untitled alert window, which is consistent with Sparkle's "up to date" message. The window could not be read by the automation, so its text is not confirmed.
 - The test run wrote two Sparkle keys into the app's preferences domain; they were deleted afterwards.
 
+
+## Version 1.15.0 (build 44): 2026-11-11
+
+Environment: Apple M4 (MacBook Air), macOS 27.3, HandBrakeCLI 1.11.2 and mkvmerge 103.0 as bundled.
+
+`test.sh`: 85 checks, including new ones for the queued encoder, Dolby Vision parsing from Matroska and MP4 records, Profile 7-only warning, a +1000 ms delay on a re-encoded audio track, and hardware decoding only on the Fast encoder.
+
+End to end through Muxie's own Compress code (10 s 1080p clips made with libx265, `hdr10plus_tool` 1.7.2 and `dovi_tool` 2.3.4):
+- HDR10+: all 259 frames of dynamic metadata survive with x265 and with VideoToolbox.
+- Dolby Vision 8.1: detected at import (badge DV, profile 8); all 259 RPUs and the `dvvC` record survive with x265 and with VideoToolbox; no warning.
+- Dolby Vision 8.1 without mastering metadata: HandBrake drops DV and Muxie reports "Dolby Vision (Profile 8) was not kept".
+- MPEG-2 source with the Fast encoder (hardware decoding requested) encodes normally.
+- Not verified on real files: Profile 5 and Profile 7 (tools cannot generate them); behaviour taken from HandBrake 1.11.2 `libhb/work.c`.
+
+Speed and quality, 60 s of a 1080p H.264 film (grainy 1968 source), MacBook Air M4:
+| Setting | Time | Size | VMAF |
+| --- | --- | --- | --- |
+| x265 medium RF 21 (Best) | 54 to 69 s | 24.6 MB | 74.6 |
+| x265 fast RF 21 | 60 to 67 s | 21.8 MB | 74.4 |
+| VideoToolbox quality 65 (Fast) | 9.1 s | 32.7 MB | 76.1 |
+| VideoToolbox + hardware decoding | 7.9 s, CPU 31.9 s -> 3.1 s | 32.0 MB | 76.1 |
+x265 timings vary with heat on the fanless Air. Hardware decoding gives x265 bit-identical output and no gain, so it is used for Fast only. Remux into the HandBrake input runs at about 240 MB/s on an external SSD (about 95 s for 22.7 GB), so staging on the internal disk or skipping the remux was not worth the risk.
