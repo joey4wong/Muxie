@@ -13,7 +13,7 @@ enum CompressEncoder: String, CaseIterable, Identifiable {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
     }
     var label: String { self == .hardware ? "Hardware (Apple VideoToolbox)" : "Software (x265)" }
-    var shortLabel: String { self == .hardware ? "Fast" : "Small" }
+    var shortLabel: String { self == .hardware ? "Fast" : "Best" }
     var detail: String {
         self == .hardware
             ? "Much faster, cooler and quieter. Files come out larger than x265 at similar quality."
