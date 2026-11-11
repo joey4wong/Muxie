@@ -83,7 +83,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let delayed = run.appendingPathComponent("subtitle-delay.mkv")
         await model.export(to: delayed)
         let delayedPlan = ExportPlan(sources: model.sources, tracks: model.tracks.filter(\.enabled))
-        try check(delayedPlan.arguments(output: delayed).contains("--sync") && delayedPlan.arguments(output: delayed).contains("750"), "Subtitle delay passes mkvmerge --sync")
+        try check(delayedPlan.arguments(output: delayed).contains("--sync") && delayedPlan.arguments(output: delayed).contains { $0.hasSuffix(":750") }, "Subtitle delay passes mkvmerge --sync")
         let originalAudio = model.tracks.first { $0.kind == "audio" }!
         model.boolBinding(originalAudio.id, \.enabled).wrappedValue = false
         let english = model.tracks.last!
