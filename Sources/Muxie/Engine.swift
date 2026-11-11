@@ -17,7 +17,7 @@ struct Probe: Decodable {
             var track_name: String?; var language: String?; var language_ietf: String?
             var default_track: Bool?; var forced_track: Bool?
             var pixel_dimensions: String?; var audio_channels: Int?; var audio_sampling_frequency: Double?
-            var codec_private_data: String?
+            var codec_private_data: String?; var minimum_timestamp: Int64?
             var color_primaries: Int?; var color_transfer_characteristics: Int?; var max_content_light: Int?
         }
         var id: Int; var type: String; var codec: String; var properties: Properties
@@ -78,7 +78,11 @@ struct ExportPlan: Sendable {
             }
             args.append("--no-subtitles")
             args += ["--no-chapters", "--no-global-tags", "--no-attachments"]
-            for track in keep { order.append("\(fileIndex):\(track.trackID)") }
+            for track in keep {
+                // Delay and drift fixes for re-encoded audio are applied here; HandBrake keeps the shifted timing.
+                if track.kind == "audio" { appendSync(&args, track: track) }
+                order.append("\(fileIndex):\(track.trackID)")
+            }
             args.append(source.url.path)
             for part in source.appendedParts { args += ["+", part.path] }
             fileIndex += 1

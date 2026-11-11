@@ -277,11 +277,21 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         if !fm.fileExists(atPath: ac3Out.path) { throw MuxError.message("AC-3 compress failed: " + (ac3Model.error ?? "no error reported")) }
         let ac3Audio = try Engine.identify(ac3Out, engine: engine).tracks.filter { $0.type == "audio" }
         try check(ac3Audio.count == 1 && ac3Audio[0].codec.uppercased().contains("AAC") && ac3Audio[0].properties.audio_channels == 6, "AC-3 5.1 source is re-encoded to AAC 5.1")
+        // A delay on a re-encoded track must survive Compress (it is applied in the remux that feeds HandBrake).
+        let delayModel = AppModel()
+        await delayModel.importFiles([fixture.appendingPathComponent("ac3-51.mkv")])
+        for track in delayModel.tracks { delayModel.boolBinding(track.id, \.enabled).wrappedValue = true }
+        for track in delayModel.tracks where track.kind == "audio" { delayModel.intBinding(track.id, \.delayMs).wrappedValue = 1000 }
+        delayModel.exportMode = .compress
+        let delayOut = run.appendingPathComponent("ac3 delay compress.mkv")
+        await delayModel.export(to: delayOut)
+        let delayStart = try Engine.identify(delayOut, engine: engine).tracks.first { $0.type == "audio" }?.properties.minimum_timestamp ?? 0
+        try check(abs(delayStart - 1_000_000_000) < 50_000_000, "Compress keeps a +1000 ms delay on a re-encoded audio track (got \(delayStart / 1_000_000) ms)")
         // Argument list: per-track encoders, mixdowns and bitrates in order; AAC above 5.1 is encoded (to 5.1), not copied.
         let hbArgs = Engine.handbrakeArguments(input: URL(fileURLWithPath: "/in.mkv"), output: URL(fileURLWithPath: "/out.mkv"), profile: CompressProfile(height: 1080), sourceAudioChannels: [2, 6, 8, 6], sourceAudioIsAAC: [true, false, false, true])
         func hbValue(_ flag: String) -> String? { hbArgs.firstIndex(of: flag).map { hbArgs[$0 + 1] } }
         try check(hbValue("--aencoder") == "copy:aac,av_aac,av_aac,copy:aac" && hbValue("--ab") == "192,384,384,384" && hbValue("--mixdown") == "stereo,none,5point1,none" && hbValue("--audio-fallback") == "av_aac", "Compress audio arguments: copy AAC, encode the rest, 7.1 at 384 kbps as 5.1")
-        try check(hbArgs.contains("vt_h265_10bit") && hbArgs.contains("--subtitle") && hbValue("--subtitle") == "none" && !hbArgs.contains("--encopts") && hbValue("--encoder-preset") == "quality", "Compress video arguments use VideoToolbox H.265 10-bit without x265 options")
+        try check(hbArgs.contains("vt_h265_10bit") && hbArgs.contains("--subtitle") && hbValue("--subtitle") == "none" && !hbArgs.contains("--encopts") && hbValue("--encoder-preset") == "quality" && hbValue("--enable-hw-decoding") == "videotoolbox", "Compress video arguments use VideoToolbox H.265 10-bit with hardware decoding, without x265 options")
         let parsed = Engine.parseHandBrakeEncodingLine("Encoding: task 1 of 1, 12.50 % (120.5 fps, avg 118.2 fps, ETA 00h05m30s)")
         try check(parsed?.percent == 12.5 && parsed?.avgFPS == 118.2 && parsed?.etaSeconds == 330, "HandBrake encoding line parser")
         let persisted = QueueJob.snapshot(sources: model.sources, tracks: model.tracks, mode: .mux, output: run.appendingPathComponent("persisted.mkv"))
@@ -291,7 +301,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(store.jobs.first?.job.output.lastPathComponent == "persisted.mkv" && store.hold && store.resumePending, "Queue persistence roundtrip")
         let swArgs = Engine.handbrakeArguments(input: URL(fileURLWithPath: "/in.mkv"), output: URL(fileURLWithPath: "/out.mkv"), profile: CompressProfile(height: 2160), encoder: .software, sourceAudioChannels: [2], sourceAudioIsAAC: [true])
         func swValue(_ flag: String) -> String? { swArgs.firstIndex(of: flag).map { swArgs[$0 + 1] } }
-        try check(swValue("--encoder") == "x265_10bit" && swValue("--encoder-preset") == "medium" && swValue("--quality") == "23" && swValue("--encopts") == "aq-mode=3:no-sao=1" && swValue("--encoder-profile") == "main10", "Software encoder uses x265 10-bit with the RF scale")
+        try check(swValue("--encoder") == "x265_10bit" && swValue("--encoder-preset") == "medium" && swValue("--quality") == "23" && swValue("--encopts") == "aq-mode=3:no-sao=1" && swValue("--encoder-profile") == "main10" && !swArgs.contains("--enable-hw-decoding"), "Software encoder uses x265 10-bit with the RF scale and software decoding")
         func enqueueEnabled(_ model: AppModel, output: URL) {
             for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
             model.enqueueExport(to: output)
