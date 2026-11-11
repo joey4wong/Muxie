@@ -7,13 +7,18 @@ import UserNotifications
 enum ExportNotifications {
     private static var requested = false
 
+    /// UNUserNotificationCenter requires a host app bundle; processes without one (the test harness)
+    /// cannot present notifications and would crash the framework instead.
+    private static var canNotify: Bool { Bundle.main.bundleIdentifier != nil }
+
     static func requestAuthorizationIfNeeded() {
-        guard !requested else { return }
+        guard !requested, canNotify else { return }
         requested = true
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     static func notify(title: String, body: String, output: URL?) {
+        guard canNotify else { return }
         requestAuthorizationIfNeeded()
         let content = UNMutableNotificationContent()
         content.title = title
