@@ -8,9 +8,9 @@ Source: https://github.com/joey4wong/Muxie
 
 - **Track editor for MKV.** Open a video, add audio from another file, add SRT subtitle tracks or tracks from another video, choose which tracks go in, and edit each track's name, language, default flag and forced flag.
 - **Mux (lossless).** Copies tracks into a new MKV without re-encoding. Chapters, tags and attachments from the first file are kept, plus subtitle fonts from added files. Subtitles stay soft subtitles.
-- **Compress.** Re-encodes video to H.265 10-bit to make large files (for example a 22 to 30 GB Blu-ray) much smaller. Pick the encoder in the **Encoder** menu in the window toolbar (shown when Compress is selected):
-  - **Hardware (Apple VideoToolbox):** the default; uses the Mac's media engine.
-  - **x265 (software):** slower, usually the smallest files and the best detail and film grain.
+- **Compress.** Re-encodes video to H.265 10-bit to make large files (for example a 22 to 30 GB Blu-ray) much smaller. Pick the encoder with the bolt button in the window toolbar (shown when Compress is selected):
+  - **x265 (software, Best):** the default; slower, usually the smallest files and the best detail and film grain.
+  - **Hardware (Apple VideoToolbox, Fast):** bolt on; uses the Mac's media engine. Much quicker and quieter, files come out larger.
   - 1080p sources stay 1080p and 4K stay 4K, constant frame rate, black bars kept, HDR10 preserved. Every checked audio track becomes AAC with the same channel layout (mono 96 kbps, stereo 192 kbps, 3 to 6 channels 384 kbps; 7.1 becomes 5.1). AAC tracks up to 5.1 are copied as they are. Checked subtitles are kept.
   - Compress is hidden when the video is already HEVC 10-bit at 1080p or below.
 - **Blu-ray ISO.** Drop a Blu-ray `.iso`; Muxie mounts it and uses the main feature (the largest playlist).
@@ -23,7 +23,7 @@ Source: https://github.com/joey4wong/Muxie
 1. Open a video (**File > Open Video…**, Cmd+O, or drop it into the window). A Blu-ray ISO works too.
 2. Add tracks with **Add Tracks** (an audio file, a subtitle file or another video). Imported tracks start unchecked.
 3. Check the tracks to include. Click a row to edit its name, language, default and forced flags.
-4. Choose **Mux** or **Compress** with the switch above the Export button. For Compress, pick **Hardware** or **x265** in the toolbar **Encoder** menu.
+4. Choose **Mux** or **Compress** with the switch above the Export button. For Compress, turn on the toolbar bolt for **Fast** (hardware) or leave it off for **Best** (x265). Each queued job keeps the encoder it was queued with.
 5. Click **Export** (Cmd+E) and choose a new filename. Exports are queued and run one after another; you can keep adding jobs.
 
 Unnamed tracks are labeled Video / Audio / Subtitle (numbered per type when there are several); these labels are not written into the file.

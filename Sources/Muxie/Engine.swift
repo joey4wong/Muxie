@@ -34,6 +34,8 @@ struct MediaTrack: Identifiable, Equatable, Sendable, Codable {
     var codecPrivateHex: String? = nil
     var colorTransfer: Int? = nil
     var hdrBadge: HDRBadge? = nil
+    /// Dolby Vision profile from the source container (nil when the video has no Dolby Vision).
+    var dolbyVisionProfile: Int? = nil
     var delayMs: Int = 0
     var syncDriftNumerator: Int?
     var syncDriftDenominator: Int?

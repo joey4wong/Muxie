@@ -172,7 +172,16 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(VideoHDR.badge(transfer: nil, codecPrivateHex: dvP8) == .dolbyVision, "DV badge from dvcC")
         try check(VideoHDR.dolbyVisionProfile(codecPrivateHex: dvP8) == 8, "dvcC profile 8")
         try check(VideoHDR.dolbyVisionProfile(codecPrivateHex: dvP5) == 5, "dvvC profile 5")
-        try check(VideoHDR.compressExportWarning(badges: [.dolbyVision], encoder: .software, dolbyVisionProfiles: [5])?.contains("Profile 5") == true, "DV P5 warning")
+        // HandBrake keeps Profile 5 and 8 as they are; only Profile 7 is changed (converted to 8.1), so only it warns.
+        try check(VideoHDR.compressExportWarning(badges: [.dolbyVision], encoder: .software, dolbyVisionProfiles: [5]) == nil, "DV P5 needs no warning (HandBrake keeps it)")
+        try check(VideoHDR.compressExportWarning(badges: [.dolbyVision], encoder: .hardware, dolbyVisionProfiles: [7])?.contains("Profile 7") == true, "DV P7 warning")
+        try check(VideoHDR.compressExportWarning(badges: [.hdr10], encoder: .software) == nil, "Plain HDR10 needs no warning")
+        // The container record mkvmerge -J does not report: Matroska BlockAdditionMapping, and an MP4 box.
+        let mkvDV = Data([0x00, 0x41, 0xE7, 0x84] + Array("dvvC".utf8) + [0x41, 0xED, 0x98, 0x01, 0x00, 0x10, 0x1d] + Array(repeating: 0, count: 20))
+        let mp4DV = Data([0x00, 0x00, 0x00, 0x20] + Array("dvcC".utf8) + [0x01, 0x00, 0x0a, 0x3f] + Array(repeating: 0, count: 20))
+        try check(VideoHDR.dolbyVisionProfile(containerBytes: mkvDV) == 8, "DV profile 8 from a Matroska BlockAdditionMapping")
+        try check(VideoHDR.dolbyVisionProfile(containerBytes: mp4DV) == 5, "DV profile 5 from an MP4 dvcC box")
+        try check(VideoHDR.dolbyVisionProfile(fileURL: fixture.appendingPathComponent("hdr10-4k.mkv")) == nil, "No DV found in a plain HDR10 file")
         try check(hdrModel.compressEligible, "Compress is offered for a 4K HEVC source")
         hdrModel.exportMode = .compress
         let hdrURL = run.appendingPathComponent("hdr compress.mkv")
@@ -309,6 +318,21 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(compressedQueued.tracks.first { $0.type == "video" }!.codec.uppercased().contains("HEVC"), "Queued compress job uses Compress mode")
         let muxQueued = try Engine.identify(run.appendingPathComponent("queue-after-compress.mkv"), engine: engine)
         try check(muxQueued.tracks.first { $0.type == "video" }!.codec.uppercased().contains("AVC"), "Following queued job uses Mux mode")
+        // A queued job keeps the encoder it was queued with, even if the toolbar toggle changes before it runs.
+        let savedEncoder = CompressEncoder.current
+        CompressEncoder.current = .software
+        let encQueue = AppModel()
+        await encQueue.importFiles([video])
+        for track in encQueue.tracks { encQueue.boolBinding(track.id, \.enabled).wrappedValue = true }
+        encQueue.exportMode = .compress
+        let encOut = run.appendingPathComponent("queue-encoder-kept.mkv")
+        encQueue.enqueueExport(to: encOut)
+        CompressEncoder.current = .hardware
+        await encQueue.waitForQueueIdle()
+        CompressEncoder.current = savedEncoder
+        let encBytes = try Data(contentsOf: encOut)
+        // x265 writes its version banner ("x265 (build ...") into an SEI message; VideoToolbox output carries none.
+        try check(encQueue.queueJobs.first?.encoder == .software && encBytes.range(of: Data("x265 (build".utf8)) != nil, "Queued compress job uses the encoder chosen at enqueue time")
         let failPath = run.appendingPathComponent("queue-fail.mkv")
         try Data("existing".utf8).write(to: failPath)
         let failQueue = AppModel()

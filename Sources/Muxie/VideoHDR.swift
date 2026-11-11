@@ -47,25 +47,55 @@ enum VideoHDR {
         return hex.contains("64766343") || hex.contains("64767643")
     }
 
-    static func compressExportWarning(badges: [HDRBadge], encoder: CompressEncoder, dolbyVisionProfiles: [Int] = []) -> String? {
-        guard !badges.isEmpty else { return nil }
-        var lines: [String] = []
-        if badges.contains(.dolbyVision) {
-            if dolbyVisionProfiles.contains(5) {
-                lines.append("This video is Dolby Vision Profile 5, which has no HDR10 base layer. Compress would produce wrong (purple/green) colors; use Mux instead.")
-            } else {
-                lines.append("This video includes Dolby Vision. Compress keeps HDR10 picture data only; Dolby Vision dynamic metadata (RPU) is not preserved.")
+    /// Dolby Vision profile from the container's configuration record, which `mkvmerge -J` does not report:
+    /// Matroska keeps it in a BlockAdditionMapping (type dvcC/dvvC/dvwC), MP4 in a box of the same name.
+    /// Reads the first and last 16 MB (MP4 files may keep `moov` at the end). Nil when there is none.
+    static func dolbyVisionProfile(fileURL: URL) -> Int? {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
+        defer { try? handle.close() }
+        let window = 16 << 20
+        if let head = try? handle.read(upToCount: window), let profile = dolbyVisionProfile(containerBytes: head) { return profile }
+        if let size = try? handle.seekToEnd(), size > UInt64(window) {
+            try? handle.seek(toOffset: size - UInt64(window))
+            if let tail = try? handle.read(upToCount: window), let profile = dolbyVisionProfile(containerBytes: tail) { return profile }
+        }
+        return nil
+    }
+
+    /// Finds a DOVIDecoderConfigurationRecord (version major, minor, then profile in the top 7 bits) after a dvcC/dvvC/dvwC tag.
+    static func dolbyVisionProfile(containerBytes data: Data) -> Int? {
+        let b = [UInt8](data)
+        var i = 3
+        while i + 4 <= b.count {
+            defer { i += 1 }
+            guard b[i] == 0x64, b[i + 1] == 0x76, b[i + 2] == 0x63 || b[i + 2] == 0x76 || b[i + 2] == 0x77, b[i + 3] == 0x43 else { continue }
+            var p = i + 4
+            // Matroska: BlockAddIDType (0x41E7, 4-byte uint) is followed by BlockAddIDExtraData (0x41ED, size, record).
+            if b[i - 3] == 0x41, b[i - 2] == 0xE7, b[i - 1] == 0x84 {
+                var q = p
+                let limit = min(b.count - 2, p + 48)
+                while q < limit, !(b[q] == 0x41 && b[q + 1] == 0xED) { q += 1 }
+                guard q < limit else { continue }
+                q += 2
+                guard q < b.count else { continue }
+                var length = 1
+                var mask: UInt8 = 0x80
+                while length <= 8, b[q] & mask == 0 { length += 1; mask >>= 1 }
+                p = q + length
             }
+            guard p + 3 <= b.count, (1...3).contains(b[p]) else { continue }
+            let profile = Int(b[p + 2] >> 1)
+            if [4, 5, 7, 8, 9, 10].contains(profile) { return profile }
         }
-        if badges.contains(.hdr10) || badges.contains(.hlg) {
-            lines.append("HDR color is preserved when the encoder supports it.")
-        }
-        // Covers both .hdr10 (dynamic metadata is undetectable at import) and legacy .hdr10Plus badges.
-        if badges.contains(.hdr10) || badges.contains(.hdr10Plus) {
-            lines.append("This video may include HDR10+ dynamic metadata. Only static HDR10 is verified after export.")
-        }
-        if encoder == .hardware, badges.contains(.dolbyVision) {
-            lines.append("Apple hardware encoding cannot pass through Dolby Vision profiles.")
+        return nil
+    }
+
+    /// HandBrake 1.11.2 passes HDR10+ and Dolby Vision (profiles 5, 7, 8, 10) through both H.265 10-bit encoders by default,
+    /// so only the cases that change the stream are worth a warning.
+    static func compressExportWarning(badges: [HDRBadge], encoder: CompressEncoder, dolbyVisionProfiles: [Int] = []) -> String? {
+        var lines: [String] = []
+        if dolbyVisionProfiles.contains(7) {
+            lines.append("This video is Dolby Vision Profile 7 (UHD Blu-ray). Compress converts it to Profile 8.1 and drops the enhancement layer.")
         }
         return lines.isEmpty ? nil : lines.joined(separator: "\n\n")
     }

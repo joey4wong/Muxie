@@ -111,7 +111,13 @@ import UniformTypeIdentifiers
                     originURL = nil
                     sourceBytes = Int64((try? importURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
                 }
-                let probe = try await Task.detached(priority: .userInitiated) { try Engine.identify(importURL, engine: engine) }.value
+                let (probe, fileDVProfile) = try await Task.detached(priority: .userInitiated) { () throws -> (Probe, Int?) in
+                    let probe = try Engine.identify(importURL, engine: engine)
+                    let container = (probe.container.type ?? "").lowercased()
+                    let hasHEVC = probe.tracks.contains { $0.type == "video" && ($0.codec.uppercased().contains("HEVC") || $0.codec.uppercased().contains("H.265")) }
+                    let readable = container.contains("matroska") || container.contains("mp4") || container.contains("quicktime")
+                    return (probe, hasHEVC && readable ? VideoHDR.dolbyVisionProfile(fileURL: importURL) : nil)
+                }.value
                 let supported = probe.tracks.filter { ["video", "audio", "subtitles"].contains($0.type) }
                 guard !supported.isEmpty else { throw MuxError.message("\(url.lastPathComponent) contains no supported tracks.") }
                 let isPrimary = sources.isEmpty
@@ -126,8 +132,9 @@ import UniformTypeIdentifiers
                     else if let channels = t.properties.audio_channels { detail = "\(channels) ch" }
                     else { detail = "" }
                     let pixelHeight = t.properties.pixel_dimensions.flatMap { Int($0.split(separator: "x").last ?? "") }
-                    let hdr = t.type == "video" ? VideoHDR.badge(transfer: t.properties.color_transfer_characteristics, codecPrivateHex: t.properties.codec_private_data) : nil
-                    added.append(MediaTrack(sourceID: sourceID, trackID: t.id, kind: t.type, codec: t.codec, name: t.properties.track_name ?? "", language: t.properties.language_ietf ?? t.properties.language ?? "und", isDefault: isPrimary ? (t.properties.default_track ?? false) : false, isForced: t.properties.forced_track ?? false, enabled: false, detail: detail, audioChannels: t.type == "audio" ? t.properties.audio_channels : nil, isAAC: t.type == "audio" ? t.codec.uppercased().contains("AAC") : nil, pixelHeight: pixelHeight, codecPrivateHex: t.type == "video" ? t.properties.codec_private_data : nil, colorTransfer: t.type == "video" ? t.properties.color_transfer_characteristics : nil, hdrBadge: hdr))
+                    let dvProfile = t.type == "video" ? (fileDVProfile ?? VideoHDR.dolbyVisionProfile(codecPrivateHex: t.properties.codec_private_data)) : nil
+                    let hdr = t.type == "video" ? (dvProfile != nil ? .dolbyVision : VideoHDR.badge(transfer: t.properties.color_transfer_characteristics, codecPrivateHex: t.properties.codec_private_data)) : nil
+                    added.append(MediaTrack(sourceID: sourceID, trackID: t.id, kind: t.type, codec: t.codec, name: t.properties.track_name ?? "", language: t.properties.language_ietf ?? t.properties.language ?? "und", isDefault: isPrimary ? (t.properties.default_track ?? false) : false, isForced: t.properties.forced_track ?? false, enabled: false, detail: detail, audioChannels: t.type == "audio" ? t.properties.audio_channels : nil, isAAC: t.type == "audio" ? t.codec.uppercased().contains("AAC") : nil, pixelHeight: pixelHeight, codecPrivateHex: t.type == "video" ? t.properties.codec_private_data : nil, colorTransfer: t.type == "video" ? t.properties.color_transfer_characteristics : nil, hdrBadge: hdr, dolbyVisionProfile: dvProfile))
                 }
                 tracks += added
             } catch {
@@ -172,7 +179,7 @@ import UniformTypeIdentifiers
     func hdrCompressWarning() -> String? {
         guard exportMode == .compress else { return nil }
         let badges = tracks.filter { $0.enabled && $0.kind == "video" }.compactMap(\.hdrBadge)
-        let profiles = tracks.filter { $0.enabled && $0.kind == "video" }.compactMap { VideoHDR.dolbyVisionProfile(codecPrivateHex: $0.codecPrivateHex) }
+        let profiles = tracks.filter { $0.enabled && $0.kind == "video" }.compactMap { $0.dolbyVisionProfile ?? VideoHDR.dolbyVisionProfile(codecPrivateHex: $0.codecPrivateHex) }
         return VideoHDR.compressExportWarning(badges: badges, encoder: CompressEncoder.current, dolbyVisionProfiles: profiles)
     }
     func binding(_ id: UUID, _ keyPath: WritableKeyPath<MediaTrack, String>) -> Binding<String> {
@@ -478,7 +485,8 @@ import UniformTypeIdentifiers
         }
         do {
             let handbrake = Engine.handbrakeExecutable
-            let encoder = CompressEncoder.current
+            // The encoder chosen when the job was queued; the toolbar toggle may have changed since.
+            let encoder = self[job: jobID].encoder ?? CompressEncoder.current
             let warnings = try await Task.detached(priority: .userInitiated) { [running] in
                 if mode == .compress, let handbrake {
                     return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running, encoder: encoder) { update in

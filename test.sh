@@ -54,6 +54,7 @@ BUNDLED_BIN="${MUXIE_APP:-$ROOT/dist/Muxie.app}/Contents/Resources/bin"
 [[ -x "$BUNDLED_BIN/mkvmerge" ]] || { echo "Run ./build.sh first: no bundled mkvmerge at $BUNDLED_BIN" >&2; exit 1; }
 [[ -x "$BUNDLED_BIN/HandBrakeCLI" ]] || { echo "Run ./build.sh first: no bundled HandBrakeCLI at $BUNDLED_BIN" >&2; exit 1; }
 ditto "$BUNDLED_BIN" "$T/bin"
+xattr -dr com.apple.quarantine "$T/bin" 2>/dev/null || true
 if otool -L "$T/bin/mkvmerge" "$T/bin/HandBrakeCLI" "$T"/bin/lib/*.dylib 2>/dev/null | awk '{print $1}' | grep -E '^(/opt/|/usr/local/|/Users/|/Applications/)' ; then echo 'Bundled tools link to a library outside the app.' >&2; exit 1; fi
 codesign --force --sign - --timestamp=none "$T/integration"
 xattr -d com.apple.quarantine "$T/integration" 2>/dev/null || true
