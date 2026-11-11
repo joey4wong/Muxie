@@ -8,7 +8,7 @@ Source: https://github.com/joey4wong/Muxie
 
 - **Track editor for MKV.** Open a video, add audio from another file, add SRT subtitle tracks or tracks from another video, choose which tracks go in, and edit each track's name, language, default flag and forced flag.
 - **Mux (lossless).** Copies tracks into a new MKV without re-encoding. Chapters, tags and attachments from the first file are kept, plus subtitle fonts from added files. Subtitles stay soft subtitles.
-- **Compress.** Re-encodes video to H.265 10-bit to make large files (for example a 22 to 30 GB Blu-ray) much smaller. Pick the encoder in the **Encoder** menu in the window toolbar (shown when Compress is selected; also in **Settings**, Cmd+,):
+- **Compress.** Re-encodes video to H.265 10-bit to make large files (for example a 22 to 30 GB Blu-ray) much smaller. Pick the encoder in the **Encoder** menu in the window toolbar (shown when Compress is selected):
   - **Hardware (Apple VideoToolbox):** the default; uses the Mac's media engine.
   - **x265 (software):** slower, usually the smallest files and the best detail and film grain.
   - 1080p sources stay 1080p and 4K stay 4K, constant frame rate, black bars kept, HDR10 preserved. Every checked audio track becomes AAC with the same channel layout (mono 96 kbps, stereo 192 kbps, 3 to 6 channels 384 kbps; 7.1 becomes 5.1). AAC tracks up to 5.1 are copied as they are. Checked subtitles are kept.
