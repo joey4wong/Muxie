@@ -35,6 +35,7 @@ struct ContentView: View {
     @State private var targeted = false
     @State private var showCompactInspector = false
     @AppStorage(CompressEncoder.defaultsKey) private var encoderRaw = CompressEncoder.hardware.rawValue
+    @State private var showEncoderInfo = false
     var body: some View {
         GeometryReader { geometry in
             if model.sources.isEmpty {
@@ -90,7 +91,19 @@ struct ContentView: View {
                     Picker("Encoder", selection: $encoderRaw) {
                         ForEach(CompressEncoder.allCases) { Text($0.shortLabel).tag($0.rawValue) }
                     }
-                    .pickerStyle(.menu).help((CompressEncoder(rawValue: encoderRaw) ?? .hardware).detail).disabled(model.importing)
+                    .pickerStyle(.menu).disabled(model.importing)
+                    Button { showEncoderInfo = true } label: { Image(systemName: "questionmark.circle") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .popover(isPresented: $showEncoderInfo, arrowEdge: .bottom) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(CompressEncoder.allCases) { e in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(e.shortLabel + " · " + e.technology).font(.headline)
+                                        Text(e.detail).font(.callout).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }.padding(14).frame(width: 280, alignment: .leading)
+                        }
                 }
                 if !model.sources.isEmpty {
                     Button { model.reset() } label: { Image(systemName: "doc.badge.plus") }.help("New Project").disabled(model.importing)
