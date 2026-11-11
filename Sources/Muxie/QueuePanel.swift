@@ -42,11 +42,11 @@ struct QueueStripView: View {
                 }
                 Button("Remove") { model.removeQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .running:
-                Button("Pause") { model.pauseQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
-                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                Button("Pause", systemImage: "pause.fill") { model.pauseQueueJob(job.id) }.labelStyle(.iconOnly).help("Pause").buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                Button("Cancel", systemImage: "xmark", role: .cancel) { model.cancelQueueJob(job.id) }.labelStyle(.iconOnly).help("Cancel").buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .paused:
-                if !anyRunning { Button("Resume") { model.resumeQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize() }
-                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                if !anyRunning { Button("Resume", systemImage: "play.fill") { model.resumeQueueJob(job.id) }.labelStyle(.iconOnly).help("Resume").buttonStyle(NeutralGlassButtonStyle()).fixedSize() }
+                Button("Cancel", systemImage: "xmark", role: .cancel) { model.cancelQueueJob(job.id) }.labelStyle(.iconOnly).help("Cancel").buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .done:
                 Button("Show in Finder", systemImage: "folder") { model.revealQueueOutput(job.output) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
                 Button("Clear") { model.clearFinishedQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
