@@ -28,7 +28,7 @@ struct QueueStripView: View {
             }
             Spacer(minLength: 8)
             if job.isRunning || job.isPaused {
-                ProgressView(value: job.progress).frame(minWidth: 50, maxWidth: 140)
+                ChargingBar(progress: job.progress, animating: job.isRunning).frame(minWidth: 50, maxWidth: 140).frame(height: 6)
                 Text("\(Int(job.progress * 100))%").font(.system(size: 10, design: .monospaced)).monospacedDigit().frame(width: 34, alignment: .trailing)
             }
             let anyRunning = model.queueJobs.contains { $0.isRunning }
@@ -42,11 +42,11 @@ struct QueueStripView: View {
                 }
                 Button("Remove") { model.removeQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .running:
-                Button("Pause") { model.pauseQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
-                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                Button("Pause", systemImage: "pause.fill") { model.pauseQueueJob(job.id) }.labelStyle(.iconOnly).help("Pause").buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                Button("Cancel", systemImage: "xmark", role: .cancel) { model.cancelQueueJob(job.id) }.labelStyle(.iconOnly).help("Cancel").buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .paused:
-                if !anyRunning { Button("Resume") { model.resumeQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize() }
-                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                if !anyRunning { Button("Resume", systemImage: "play.fill") { model.resumeQueueJob(job.id) }.labelStyle(.iconOnly).help("Resume").buttonStyle(NeutralGlassButtonStyle()).fixedSize() }
+                Button("Cancel", systemImage: "xmark", role: .cancel) { model.cancelQueueJob(job.id) }.labelStyle(.iconOnly).help("Cancel").buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .done:
                 Button("Show in Finder", systemImage: "folder") { model.revealQueueOutput(job.output) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
                 Button("Clear") { model.clearFinishedQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
@@ -59,5 +59,34 @@ struct QueueStripView: View {
         }
         .padding(.horizontal, 14).frame(height: rowHeight)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private struct ChargingBar: View {
+    let progress: Double
+    let animating: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        GeometryReader { geo in
+            let fillWidth = geo.size.width * min(max(progress, 0), 1)
+            ZStack(alignment: .leading) {
+                Capsule().fill(.primary.opacity(0.15))
+                Capsule().fill(Color.accentColor).frame(width: fillWidth)
+                    .overlay(alignment: .leading) {
+                        if animating && !reduceMotion {
+                            TimelineView(.animation) { context in
+                                let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
+                                let glow = max(fillWidth * 0.5, 24)
+                                LinearGradient(colors: [.clear, .white.opacity(0.55), .clear], startPoint: .leading, endPoint: .trailing)
+                                    .frame(width: glow)
+                                    .offset(x: -glow + (fillWidth + glow) * t)
+                            }
+                        }
+                    }
+                    .clipShape(Capsule())
+            }
+        }
+        .accessibilityElement()
+        .accessibilityValue("\(Int(progress * 100)) percent")
     }
 }
