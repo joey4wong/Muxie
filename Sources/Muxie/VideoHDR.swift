@@ -23,18 +23,39 @@ enum VideoHDR {
         return nil
     }
 
-    /// mkvmerge sometimes carries Dolby Vision side data in codec private hex; HandBrake scan refines this when needed.
-    private static func dolbyVisionHeuristic(codecPrivateHex: String?) -> Bool {
-        guard let codecPrivateHex else { return false }
-        let upper = codecPrivateHex.uppercased()
-        return upper.contains("64767663") || upper.contains("DOVI")
+    static func dolbyVisionProfile(codecPrivateHex: String?) -> Int? {
+        guard let hex = codecPrivateHex?.lowercased() else { return nil }
+        for magic in ["64766343", "64767643"] {
+            var from = hex.startIndex
+            while let r = hex.range(of: magic, range: from..<hex.endIndex) {
+                let start = r.upperBound
+                if let end = hex.index(start, offsetBy: 6, limitedBy: hex.endIndex), start != end {
+                    let bytes = stride(from: 0, to: 6, by: 2).compactMap { i -> Int? in
+                        let a = hex.index(start, offsetBy: i), b = hex.index(a, offsetBy: 2)
+                        return Int(hex[a..<b], radix: 16)
+                    }
+                    if bytes.count == 3, bytes[0] >= 1, bytes[0] <= 2 { return bytes[2] >> 1 }
+                }
+                from = r.upperBound
+            }
+        }
+        return nil
     }
 
-    static func compressExportWarning(badges: [HDRBadge], encoder: CompressEncoder) -> String? {
+    private static func dolbyVisionHeuristic(codecPrivateHex: String?) -> Bool {
+        guard let hex = codecPrivateHex?.lowercased() else { return false }
+        return hex.contains("64766343") || hex.contains("64767643")
+    }
+
+    static func compressExportWarning(badges: [HDRBadge], encoder: CompressEncoder, dolbyVisionProfiles: [Int] = []) -> String? {
         guard !badges.isEmpty else { return nil }
         var lines: [String] = []
         if badges.contains(.dolbyVision) {
-            lines.append("This video includes Dolby Vision. Compress keeps HDR10 picture data only; Dolby Vision dynamic metadata is not preserved.")
+            if dolbyVisionProfiles.contains(5) {
+                lines.append("This video is Dolby Vision Profile 5, which has no HDR10 base layer. Compress would produce wrong (purple/green) colors; use Mux instead.")
+            } else {
+                lines.append("This video includes Dolby Vision. Compress keeps HDR10 picture data only; Dolby Vision dynamic metadata (RPU) is not preserved.")
+            }
         }
         if badges.contains(.hdr10) || badges.contains(.hlg) {
             lines.append("HDR color is preserved when the encoder supports it.")

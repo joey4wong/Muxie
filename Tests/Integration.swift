@@ -167,6 +167,12 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         await hdrModel.importFiles([fixture.appendingPathComponent("hdr10-4k.mkv")])
         for track in hdrModel.tracks { hdrModel.boolBinding(track.id, \.enabled).wrappedValue = true }
         try check(hdrModel.tracks.first(where: { $0.kind == "video" })?.hdrBadge == .hdr10, "HDR10 badge on import")
+        let dvP8 = "0000000000" + "64766343" + "010011" + "00"
+        let dvP5 = "64767643" + "0100" + "0a" + "00"
+        try check(VideoHDR.badge(transfer: nil, codecPrivateHex: dvP8) == .dolbyVision, "DV badge from dvcC")
+        try check(VideoHDR.dolbyVisionProfile(codecPrivateHex: dvP8) == 8, "dvcC profile 8")
+        try check(VideoHDR.dolbyVisionProfile(codecPrivateHex: dvP5) == 5, "dvvC profile 5")
+        try check(VideoHDR.compressExportWarning(badges: [.dolbyVision], encoder: .software, dolbyVisionProfiles: [5])?.contains("Profile 5") == true, "DV P5 warning")
         try check(hdrModel.compressEligible, "Compress is offered for a 4K HEVC source")
         hdrModel.exportMode = .compress
         let hdrURL = run.appendingPathComponent("hdr compress.mkv")
