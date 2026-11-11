@@ -108,24 +108,28 @@ extension Engine {
     /// AAC sources with at most 5.1 channels are copied untouched (no generation loss, no encode time).
     static func audioIsCopied(channels: Int, isAAC: Bool) -> Bool { isAAC && channels <= CompressSettings.maxAACChannels }
 
-    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile, encoder: CompressEncoder = .hardware, sourceAudioChannels: [Int], sourceAudioIsAAC: [Bool] = []) -> [String] {
+    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile, encoder: CompressEncoder = .hardware, sourceAudioChannels: [Int], sourceAudioIsAAC: [Bool] = [], copyVideo: Bool = false) -> [String] {
         var args = [
             "--input", input.path,
             "--output", output.path,
             "--format", "av_mkv",
-            "--encoder", encoder.handbrakeEncoder,
-            "--encoder-profile", CompressSettings.encoderProfile,
+            "--encoder", copyVideo ? "copy" : encoder.handbrakeEncoder,
         ]
-        if encoder == .hardware {
-            args += ["--encoder-preset", CompressSettings.encoderPreset, "--quality", String(profile.quality)]
-        } else {
-            args += ["--encoder-preset", CompressSettings.x265Preset, "--encopts", CompressSettings.x265ExtraOptions, "--quality", String(profile.rf)]
+        if !copyVideo {
+            args += ["--encoder-profile", CompressSettings.encoderProfile]
+            if encoder == .hardware {
+                args += ["--encoder-preset", CompressSettings.encoderPreset, "--quality", String(profile.quality)]
+            } else {
+                args += ["--encoder-preset", CompressSettings.x265Preset, "--encopts", CompressSettings.x265ExtraOptions, "--quality", String(profile.rf)]
+            }
+            args += [
+                "--maxWidth", String(profile.maxWidth),
+                "--maxHeight", String(profile.maxHeight),
+                "--cfr",
+                "--crop-mode", "none",
+            ]
         }
         args += [
-            "--maxWidth", String(profile.maxWidth),
-            "--maxHeight", String(profile.maxHeight),
-            "--cfr",
-            "--crop-mode", "none",
             "--subtitle", "none",
         ]
         if sourceAudioChannels.isEmpty {
@@ -187,7 +191,8 @@ extension Engine {
         let sourceAudioChannels = sourceAudioTracks.map { $0.properties.audio_channels ?? 2 }
         let sourceAudioIsAAC = sourceAudioTracks.map { $0.codec.uppercased().contains("AAC") }
         let profile = CompressProfile(height: sourceHeight)
-        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile, encoder: encoder, sourceAudioChannels: sourceAudioChannels, sourceAudioIsAAC: sourceAudioIsAAC)
+        let copyVideo = (try? videoAlreadyHEVC1080p(plan.orderedTracks, sources: plan.sources, engine: mkvmerge)) ?? false
+        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile, encoder: encoder, sourceAudioChannels: sourceAudioChannels, sourceAudioIsAAC: sourceAudioIsAAC, copyVideo: copyVideo)
         let hbResult = try job.runHandBrake(engine: handbrake, arguments: hbArgs) { update in
             var scaled = update
             scaled.value = 0.10 + update.value * 0.82
