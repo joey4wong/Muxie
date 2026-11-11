@@ -11,7 +11,7 @@ import AppKit
     var body: some Scene {
         Window("Muxie", id: "main") {
             ContentView().environmentObject(model)
-                .frame(minWidth: model.sources.isEmpty ? 380 : 520, idealWidth: 760, minHeight: model.minimumContentHeight, idealHeight: 520)
+                .frame(minWidth: model.sources.isEmpty && model.queueJobs.isEmpty ? 380 : 560, idealWidth: 760, minHeight: model.minimumContentHeight, idealHeight: 520)
                 .onAppear { delegate.bind(model) }
                 .onOpenURL { url in Task { await model.importFiles([url]) } }
                 .alert("Unable to Complete", isPresented: $model.showError) {
