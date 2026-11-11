@@ -130,7 +130,7 @@ extension Engine {
             "--subtitle", "none",
         ]
         if sourceAudioChannels.isEmpty {
-            args.append("--no-audio")
+            args += ["--audio", "none"]
         } else {
             args.append("--all-audio")
         }
