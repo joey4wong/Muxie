@@ -68,22 +68,31 @@ private struct ChargingBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         GeometryReader { geo in
-            let fillWidth = geo.size.width * min(max(progress, 0), 1)
+            let p = min(max(progress, 0), 1)
+            let fillWidth = geo.size.width * p
+            let amber = Color(red: 1.0, green: 0.78, blue: 0.0)
             ZStack(alignment: .leading) {
                 Capsule().fill(.primary.opacity(0.15))
-                Capsule().fill(Color.accentColor).frame(width: fillWidth)
+                Capsule().fill(LinearGradient(colors: [Color(red: 0.95, green: 0.62, blue: 0.0), amber, Color(red: 1.0, green: 0.92, blue: 0.3)], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: fillWidth)
                     .overlay(alignment: .leading) {
                         if animating && !reduceMotion {
                             TimelineView(.animation) { context in
-                                let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
-                                let glow = max(fillWidth * 0.5, 24)
-                                LinearGradient(colors: [.clear, .white.opacity(0.55), .clear], startPoint: .leading, endPoint: .trailing)
-                                    .frame(width: glow)
-                                    .offset(x: -glow + (fillWidth + glow) * t)
+                                let period = 1.6 - 1.0 * p
+                                let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+                                let glow = max(fillWidth * 0.45, 16)
+                                let pulse = 0.5 + 0.5 * sin(context.date.timeIntervalSinceReferenceDate * (3 + 8 * p))
+                                ZStack(alignment: .leading) {
+                                    Color.white.opacity(0.10 * p + 0.20 * p * pulse)
+                                    LinearGradient(colors: [.clear, .white.opacity(0.35 + 0.6 * p), .clear], startPoint: .leading, endPoint: .trailing)
+                                        .frame(width: glow)
+                                        .offset(x: -glow + (fillWidth + glow) * t)
+                                }
                             }
                         }
                     }
                     .clipShape(Capsule())
+                    .shadow(color: amber.opacity(animating ? 0.9 * p * p : 0), radius: 2 + 8 * p)
             }
         }
         .accessibilityElement()
