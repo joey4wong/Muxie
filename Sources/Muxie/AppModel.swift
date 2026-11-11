@@ -172,7 +172,8 @@ import UniformTypeIdentifiers
     func hdrCompressWarning() -> String? {
         guard exportMode == .compress else { return nil }
         let badges = tracks.filter { $0.enabled && $0.kind == "video" }.compactMap(\.hdrBadge)
-        return VideoHDR.compressExportWarning(badges: badges, encoder: CompressEncoder.current)
+        let profiles = tracks.filter { $0.enabled && $0.kind == "video" }.compactMap { VideoHDR.dolbyVisionProfile(codecPrivateHex: $0.codecPrivateHex) }
+        return VideoHDR.compressExportWarning(badges: badges, encoder: CompressEncoder.current, dolbyVisionProfiles: profiles)
     }
     func binding(_ id: UUID, _ keyPath: WritableKeyPath<MediaTrack, String>) -> Binding<String> {
         Binding(get: { self.tracks.first { $0.id == id }?[keyPath: keyPath] ?? "" }, set: { value in
