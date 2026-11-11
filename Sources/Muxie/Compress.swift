@@ -9,7 +9,7 @@ enum ExportMode: String, CaseIterable, Identifiable {
     var label: String { self == .mux ? "Mux" : "Compress" }
 }
 
-/// Which H.265 encoder Compress uses. Chosen in Settings; the default is the Apple hardware encoder.
+/// Which H.265 encoder Compress uses. Chosen from the main window toolbar when Compress is selected; default is Apple hardware.
 enum CompressEncoder: String, CaseIterable, Identifiable {
     case hardware, software
     var id: String { rawValue }
