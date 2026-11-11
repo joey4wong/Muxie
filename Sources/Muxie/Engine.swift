@@ -184,7 +184,18 @@ final class RunningJob: @unchecked Sendable {
     /// Pause stops the running tool (SIGSTOP); a tool launched while paused is stopped right after it starts.
     var isPaused = false
     func pause() { lock.lock(); defer { lock.unlock() }; isPaused = true; if let p = process, p.isRunning { kill(p.processIdentifier, SIGSTOP) } }
-    func resume() { lock.lock(); defer { lock.unlock() }; isPaused = false; if let p = process, p.isRunning { kill(p.processIdentifier, SIGCONT) } }
+    func resume() {
+        lock.lock(); defer { lock.unlock() }
+        isPaused = false
+        guard let p = process else { return }
+        let pid = p.processIdentifier
+        kill(pid, SIGCONT)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            self.lock.lock(); defer { self.lock.unlock() }
+            if !self.isPaused, let q = self.process, q.processIdentifier == pid, q.isRunning { kill(pid, SIGCONT) }
+        }
+    }
     func cancel() {
         lock.lock(); defer { lock.unlock() }
         guard !committed else { return }
