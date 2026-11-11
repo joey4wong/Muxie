@@ -24,7 +24,7 @@ struct QueueStripView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(job.output.lastPathComponent).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                Text(job.isRunning || job.isPaused ? job.statusSubtitle : job.mode.label + " · " + job.statusTitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                Text(job.isRunning || job.isPaused ? job.statusSubtitle : job.mode.label + " · " + job.statusTitle + (job.state == .done && job.warning != nil ? " with warnings" : "")).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 8)
             if job.isRunning || job.isPaused {
@@ -48,6 +48,9 @@ struct QueueStripView: View {
                 if !anyRunning { Button("Resume", systemImage: "play.fill") { model.resumeQueueJob(job.id) }.labelStyle(.iconOnly).help("Resume").buttonStyle(NeutralGlassButtonStyle()).fixedSize() }
                 Button("Cancel", systemImage: "xmark", role: .cancel) { model.cancelQueueJob(job.id) }.labelStyle(.iconOnly).help("Cancel").buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .done:
+                if let warning = job.warning {
+                    Button("Warnings", systemImage: "exclamationmark.triangle") { model.fail(warning) }.labelStyle(.iconOnly).help("Show warnings").buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                }
                 Button("Show in Finder", systemImage: "folder") { model.revealQueueOutput(job.output) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
                 Button("Clear") { model.clearFinishedQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .failed(let text):

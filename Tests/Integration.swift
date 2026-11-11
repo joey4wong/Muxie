@@ -172,7 +172,16 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(VideoHDR.badge(transfer: nil, codecPrivateHex: dvP8) == .dolbyVision, "DV badge from dvcC")
         try check(VideoHDR.dolbyVisionProfile(codecPrivateHex: dvP8) == 8, "dvcC profile 8")
         try check(VideoHDR.dolbyVisionProfile(codecPrivateHex: dvP5) == 5, "dvvC profile 5")
-        try check(VideoHDR.compressExportWarning(badges: [.dolbyVision], encoder: .software, dolbyVisionProfiles: [5])?.contains("Profile 5") == true, "DV P5 warning")
+        // HandBrake keeps Profile 5 and 8 as they are; only Profile 7 is changed (converted to 8.1), so only it warns.
+        try check(VideoHDR.compressExportWarning(badges: [.dolbyVision], encoder: .software, dolbyVisionProfiles: [5]) == nil, "DV P5 needs no warning (HandBrake keeps it)")
+        try check(VideoHDR.compressExportWarning(badges: [.dolbyVision], encoder: .hardware, dolbyVisionProfiles: [7])?.contains("Profile 7") == true, "DV P7 warning")
+        try check(VideoHDR.compressExportWarning(badges: [.hdr10], encoder: .software) == nil, "Plain HDR10 needs no warning")
+        // The container record mkvmerge -J does not report: Matroska BlockAdditionMapping, and an MP4 box.
+        let mkvDV = Data([0x00, 0x41, 0xE7, 0x84] + Array("dvvC".utf8) + [0x41, 0xED, 0x98, 0x01, 0x00, 0x10, 0x1d] + Array(repeating: 0, count: 20))
+        let mp4DV = Data([0x00, 0x00, 0x00, 0x20] + Array("dvcC".utf8) + [0x01, 0x00, 0x0a, 0x3f] + Array(repeating: 0, count: 20))
+        try check(VideoHDR.dolbyVisionProfile(containerBytes: mkvDV) == 8, "DV profile 8 from a Matroska BlockAdditionMapping")
+        try check(VideoHDR.dolbyVisionProfile(containerBytes: mp4DV) == 5, "DV profile 5 from an MP4 dvcC box")
+        try check(VideoHDR.dolbyVisionProfile(fileURL: fixture.appendingPathComponent("hdr10-4k.mkv")) == nil, "No DV found in a plain HDR10 file")
         try check(hdrModel.compressEligible, "Compress is offered for a 4K HEVC source")
         hdrModel.exportMode = .compress
         let hdrURL = run.appendingPathComponent("hdr compress.mkv")
@@ -268,11 +277,21 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         if !fm.fileExists(atPath: ac3Out.path) { throw MuxError.message("AC-3 compress failed: " + (ac3Model.error ?? "no error reported")) }
         let ac3Audio = try Engine.identify(ac3Out, engine: engine).tracks.filter { $0.type == "audio" }
         try check(ac3Audio.count == 1 && ac3Audio[0].codec.uppercased().contains("AAC") && ac3Audio[0].properties.audio_channels == 6, "AC-3 5.1 source is re-encoded to AAC 5.1")
+        // A delay on a re-encoded track must survive Compress (it is applied in the remux that feeds HandBrake).
+        let delayModel = AppModel()
+        await delayModel.importFiles([fixture.appendingPathComponent("ac3-51.mkv")])
+        for track in delayModel.tracks { delayModel.boolBinding(track.id, \.enabled).wrappedValue = true }
+        for track in delayModel.tracks where track.kind == "audio" { delayModel.intBinding(track.id, \.delayMs).wrappedValue = 1000 }
+        delayModel.exportMode = .compress
+        let delayOut = run.appendingPathComponent("ac3 delay compress.mkv")
+        await delayModel.export(to: delayOut)
+        let delayStart = try Engine.identify(delayOut, engine: engine).tracks.first { $0.type == "audio" }?.properties.minimum_timestamp ?? 0
+        try check(abs(delayStart - 1_000_000_000) < 50_000_000, "Compress keeps a +1000 ms delay on a re-encoded audio track (got \(delayStart / 1_000_000) ms)")
         // Argument list: per-track encoders, mixdowns and bitrates in order; AAC above 5.1 is encoded (to 5.1), not copied.
         let hbArgs = Engine.handbrakeArguments(input: URL(fileURLWithPath: "/in.mkv"), output: URL(fileURLWithPath: "/out.mkv"), profile: CompressProfile(height: 1080), sourceAudioChannels: [2, 6, 8, 6], sourceAudioIsAAC: [true, false, false, true])
         func hbValue(_ flag: String) -> String? { hbArgs.firstIndex(of: flag).map { hbArgs[$0 + 1] } }
         try check(hbValue("--aencoder") == "copy:aac,av_aac,av_aac,copy:aac" && hbValue("--ab") == "192,384,384,384" && hbValue("--mixdown") == "stereo,none,5point1,none" && hbValue("--audio-fallback") == "av_aac", "Compress audio arguments: copy AAC, encode the rest, 7.1 at 384 kbps as 5.1")
-        try check(hbArgs.contains("vt_h265_10bit") && hbArgs.contains("--subtitle") && hbValue("--subtitle") == "none" && !hbArgs.contains("--encopts") && hbValue("--encoder-preset") == "quality", "Compress video arguments use VideoToolbox H.265 10-bit without x265 options")
+        try check(hbArgs.contains("vt_h265_10bit") && hbArgs.contains("--subtitle") && hbValue("--subtitle") == "none" && !hbArgs.contains("--encopts") && hbValue("--encoder-preset") == "quality" && hbValue("--enable-hw-decoding") == "videotoolbox", "Compress video arguments use VideoToolbox H.265 10-bit with hardware decoding, without x265 options")
         let parsed = Engine.parseHandBrakeEncodingLine("Encoding: task 1 of 1, 12.50 % (120.5 fps, avg 118.2 fps, ETA 00h05m30s)")
         try check(parsed?.percent == 12.5 && parsed?.avgFPS == 118.2 && parsed?.etaSeconds == 330, "HandBrake encoding line parser")
         let persisted = QueueJob.snapshot(sources: model.sources, tracks: model.tracks, mode: .mux, output: run.appendingPathComponent("persisted.mkv"))
@@ -282,7 +301,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(store.jobs.first?.job.output.lastPathComponent == "persisted.mkv" && store.hold && store.resumePending, "Queue persistence roundtrip")
         let swArgs = Engine.handbrakeArguments(input: URL(fileURLWithPath: "/in.mkv"), output: URL(fileURLWithPath: "/out.mkv"), profile: CompressProfile(height: 2160), encoder: .software, sourceAudioChannels: [2], sourceAudioIsAAC: [true])
         func swValue(_ flag: String) -> String? { swArgs.firstIndex(of: flag).map { swArgs[$0 + 1] } }
-        try check(swValue("--encoder") == "x265_10bit" && swValue("--encoder-preset") == "medium" && swValue("--quality") == "23" && swValue("--encopts") == "aq-mode=3:no-sao=1" && swValue("--encoder-profile") == "main10", "Software encoder uses x265 10-bit with the RF scale")
+        try check(swValue("--encoder") == "x265_10bit" && swValue("--encoder-preset") == "medium" && swValue("--quality") == "23" && swValue("--encopts") == "aq-mode=3:no-sao=1" && swValue("--encoder-profile") == "main10" && !swArgs.contains("--enable-hw-decoding"), "Software encoder uses x265 10-bit with the RF scale and software decoding")
         func enqueueEnabled(_ model: AppModel, output: URL) {
             for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
             model.enqueueExport(to: output)
@@ -309,6 +328,21 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         try check(compressedQueued.tracks.first { $0.type == "video" }!.codec.uppercased().contains("HEVC"), "Queued compress job uses Compress mode")
         let muxQueued = try Engine.identify(run.appendingPathComponent("queue-after-compress.mkv"), engine: engine)
         try check(muxQueued.tracks.first { $0.type == "video" }!.codec.uppercased().contains("AVC"), "Following queued job uses Mux mode")
+        // A queued job keeps the encoder it was queued with, even if the toolbar toggle changes before it runs.
+        let savedEncoder = CompressEncoder.current
+        CompressEncoder.current = .software
+        let encQueue = AppModel()
+        await encQueue.importFiles([video])
+        for track in encQueue.tracks { encQueue.boolBinding(track.id, \.enabled).wrappedValue = true }
+        encQueue.exportMode = .compress
+        let encOut = run.appendingPathComponent("queue-encoder-kept.mkv")
+        encQueue.enqueueExport(to: encOut)
+        CompressEncoder.current = .hardware
+        await encQueue.waitForQueueIdle()
+        CompressEncoder.current = savedEncoder
+        let encBytes = try Data(contentsOf: encOut)
+        // x265 writes its version banner ("x265 (build ...") into an SEI message; VideoToolbox output carries none.
+        try check(encQueue.queueJobs.first?.encoder == .software && encBytes.range(of: Data("x265 (build".utf8)) != nil, "Queued compress job uses the encoder chosen at enqueue time")
         let failPath = run.appendingPathComponent("queue-fail.mkv")
         try Data("existing".utf8).write(to: failPath)
         let failQueue = AppModel()

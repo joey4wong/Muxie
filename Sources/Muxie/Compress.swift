@@ -3,7 +3,7 @@
 
 import Foundation
 
-/// Which H.265 encoder Compress uses. Chosen in the toolbar; the default is the Apple hardware encoder.
+/// Which H.265 encoder Compress uses. Chosen with the toolbar bolt toggle; the default is x265 (software).
 enum CompressEncoder: String, CaseIterable, Identifiable, Codable, Sendable {
     case hardware, software
     var id: String { rawValue }
@@ -35,7 +35,6 @@ enum CompressProfile {
 }
 
 enum CompressSettings {
-    static let encoder = CompressEncoder.hardware.handbrakeEncoder
     static let x265Preset = "medium"
     // No tune: HandBrake's "None" means the option is omitted. Passing the word "none" makes x265 reject the preset.
     static let x265ExtraOptions = "aq-mode=3:no-sao=1"
@@ -79,19 +78,6 @@ extension Engine {
     }
     static var handbrakeExecutable: URL? { handbrakeCandidates.first { FileManager.default.isExecutableFile(atPath: $0.path) } }
 
-    static func videoAlreadyHEVC1080p(_ tracks: [MediaTrack], sources: [MediaSource], engine: URL) throws -> Bool {
-        guard let video = tracks.first(where: { $0.kind == "video" && $0.enabled }),
-              let source = sources.first(where: { $0.id == video.sourceID }) else { return false }
-        let probe = try identify(source.url, engine: engine)
-        guard let vt = probe.tracks.first(where: { $0.id == video.trackID && $0.type == "video" }) else { return false }
-        let codec = vt.codec.uppercased()
-        guard codec.contains("HEVC") || codec.contains("H.265") else { return false }
-        // mkvmerge names the codec "HEVC/H.265/MPEG-H" without a bit depth; the depth is in the hvcC record (codec_private_data).
-        guard hevcBitDepth(fromCodecPrivate: vt.properties.codec_private_data) == 10 else { return false }
-        guard let dims = vt.properties.pixel_dimensions, let height = Int(dims.split(separator: "x").last ?? "") else { return false }
-        return height <= 1080
-    }
-
     /// Luma bit depth from an HEVCDecoderConfigurationRecord given as hex (as mkvmerge prints it), or nil if it cannot be read.
     static func hevcBitDepth(fromCodecPrivate hex: String?) -> Int? {
         guard let hex else { return nil }
@@ -118,6 +104,10 @@ extension Engine {
             "--encoder-profile", CompressSettings.encoderProfile,
         ]
         if encoder == .hardware {
+            // Decode on the media engine too: measured on an M4 with a 1080p H.264 clip, about 13% faster with 90% less CPU.
+            // HandBrake falls back to software decoding for codecs the scan marks as unsupported (e.g. VC-1).
+            // Not used with x265: the output is bit-identical and the CPU-bound encoder gains nothing.
+            args += ["--enable-hw-decoding", "videotoolbox"]
             args += ["--encoder-preset", CompressSettings.encoderPreset, "--quality", String(profile.quality)]
         } else {
             args += ["--encoder-preset", CompressSettings.x265Preset, "--encopts", CompressSettings.x265ExtraOptions, "--quality", String(profile.rf)]
@@ -263,9 +253,16 @@ extension Engine {
                 throw MuxError.message("Output track verification failed. No output was saved.")
             }
         }
+        var notes: [String] = []
+        if let wantedDV = plan.orderedTracks.first(where: { $0.kind == "video" })?.dolbyVisionProfile,
+           VideoHDR.dolbyVisionProfile(fileURL: finalStaging) == nil {
+            notes.append(wantedDV == 5
+                ? "Dolby Vision Profile 5 was not kept, so the colours in this file will be wrong. Use Mux for this video."
+                : "Dolby Vision (Profile \(wantedDV)) was not kept. The file plays as HDR10.")
+        }
         if job.cancelled { throw CancellationError() }
         try job.commit { try fm.moveItem(at: finalStaging, to: output) }
-        return nil
+        return notes.isEmpty ? nil : notes.joined(separator: "\n\n")
     }
 
     static func parseHandBrakeEncodingLine(_ line: String) -> (percent: Double, fps: Double?, avgFPS: Double?, etaSeconds: TimeInterval?)? {
