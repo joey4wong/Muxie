@@ -321,7 +321,7 @@ extension RunningJob {
         p.executableURL = engine
         p.arguments = arguments
         let errPipe = Pipe()
-        p.standardOutput = FileHandle.nullDevice
+        p.standardOutput = errPipe
         p.standardError = errPipe
         p.standardInput = FileHandle.nullDevice
         var environment = ProcessInfo.processInfo.environment
