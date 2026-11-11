@@ -24,7 +24,6 @@ import AppKit
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
         .windowResizability(.contentMinSize)
-        Settings { SettingsView() }
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Muxie") { model.showAbout = true }
@@ -51,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BluRayISO.recoverStaleMounts()
         Task.detached(priority: .utility) { TempFileRegistry.cleanupStale() }
         Task { @MainActor in
+            if let menu = NSApp.mainMenu, let item = menu.items.first(where: { $0.submenu === NSApp.helpMenu }) { menu.removeItem(item) }
+            NSApp.helpMenu = nil
             model?.recoverStaleISOMounts()
             model?.restorePersistedQueue()
         }

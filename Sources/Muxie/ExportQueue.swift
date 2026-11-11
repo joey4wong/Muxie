@@ -52,6 +52,7 @@ struct QueueJob: Identifiable, Equatable, Sendable, Codable {
     var progressFPS: Double? = nil
     var progressETA: TimeInterval? = nil
     var interruptedNote: String? = nil
+    var encoder: CompressEncoder? = nil
 
     var isRunning: Bool { if case .running = state { return true }; return false }
     var isPaused: Bool { if case .paused = state { return true }; return false }
@@ -72,7 +73,7 @@ struct QueueJob: Identifiable, Equatable, Sendable, Codable {
             copy.appendedParts = []
             return copy
         }
-        return QueueJob(id: UUID(), sources: snapSources, tracks: tracks, mode: mode, output: output, state: .queued, warning: nil, progressPhase: nil, progressFPS: nil, progressETA: nil, interruptedNote: nil)
+        return QueueJob(id: UUID(), sources: snapSources, tracks: tracks, mode: mode, output: output, state: .queued, warning: nil, progressPhase: nil, progressFPS: nil, progressETA: nil, interruptedNote: nil, encoder: mode == .compress ? CompressEncoder.current : nil)
     }
 
     var statusTitle: String {
@@ -88,6 +89,7 @@ struct QueueJob: Identifiable, Equatable, Sendable, Codable {
 
     var statusSubtitle: String {
         var parts = [mode.label, phaseLabel]
+        if let encoder { parts.append(encoder.technology) }
         if let progressFPS { parts.append(String(format: "%.0f fps", progressFPS)) }
         if let progressETA, progressETA > 0 { parts.append("ETA \(Self.formatETA(progressETA))") }
         return parts.joined(separator: " · ")

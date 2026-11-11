@@ -3,8 +3,8 @@
 
 import Foundation
 
-/// Which H.265 encoder Compress uses. Chosen in Settings; the default is the Apple hardware encoder.
-enum CompressEncoder: String, CaseIterable, Identifiable {
+/// Which H.265 encoder Compress uses. Chosen in the toolbar; the default is the Apple hardware encoder.
+enum CompressEncoder: String, CaseIterable, Identifiable, Codable, Sendable {
     case hardware, software
     var id: String { rawValue }
     static let defaultsKey = "compressEncoder"
@@ -13,7 +13,8 @@ enum CompressEncoder: String, CaseIterable, Identifiable {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
     }
     var label: String { self == .hardware ? "Hardware (Apple VideoToolbox)" : "Software (x265)" }
-    var shortLabel: String { self == .hardware ? "Hardware (fast)" : "x265 (smallest)" }
+    var technology: String { self == .hardware ? "H.265 hardware acceleration (Apple)" : "x265 software encoding" }
+    var shortLabel: String { self == .hardware ? "Fast" : "Best" }
     var detail: String {
         self == .hardware
             ? "Much faster, cooler and quieter. Files come out larger than x265 at similar quality."
@@ -129,7 +130,7 @@ extension Engine {
             "--subtitle", "none",
         ]
         if sourceAudioChannels.isEmpty {
-            args.append("--no-audio")
+            args += ["--audio", "none"]
         } else {
             args.append("--all-audio")
         }
