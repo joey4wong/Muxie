@@ -85,19 +85,7 @@ enum BluRayISO {
     }
 
     static func attach(iso: URL) throws -> BluRayMount {
-        var data = Data()
-        var attempt = 0
-        while true {
-            do {
-                data = try runHdiutil(["attach", "-readonly", "-nobrowse", "-noverify", "-plist", iso.path])
-                break
-            } catch {
-                attempt += 1
-                let busy = "\(error)".contains("temporarily unavailable")
-                if !busy || attempt >= 5 { throw busy ? MuxError.message("Could not mount \(iso.lastPathComponent): the disc image is busy. Eject it in Finder/Disk Utility or restart your Mac, then retry.") : error }
-                Thread.sleep(forTimeInterval: 1.5)
-            }
-        }
+        let data = try runHdiutil(["attach", "-readonly", "-nobrowse", "-noverify", "-plist", iso.path])
         let attached = try parseAttachOutput(data, isoName: iso.lastPathComponent)
         let device = attached.device
         let mountPoint = attached.mountPoint
