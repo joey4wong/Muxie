@@ -23,12 +23,12 @@ struct QueueStripView: View {
     @ViewBuilder private func queueRow(_ job: QueueJob) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(job.output.lastPathComponent).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                Text(job.output.lastPathComponent).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.middle)
                 Text(job.isRunning || job.isPaused ? job.statusSubtitle : job.mode.label + " · " + job.statusTitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 8)
             if job.isRunning || job.isPaused {
-                ProgressView(value: job.progress).frame(width: 140)
+                ProgressView(value: job.progress).frame(minWidth: 50, maxWidth: 140)
                 Text("\(Int(job.progress * 100))%").font(.system(size: 10, design: .monospaced)).monospacedDigit().frame(width: 34, alignment: .trailing)
             }
             let anyRunning = model.queueJobs.contains { $0.isRunning }
@@ -36,25 +36,25 @@ struct QueueStripView: View {
             case .queued:
                 // While another job runs the button moves this one up the line; while the queue is paused it starts this one now.
                 if anyRunning {
-                    Button("Run Next") { model.moveQueueJobToFront(job.id) }.buttonStyle(NeutralGlassButtonStyle())
+                    Button("Run Next") { model.moveQueueJobToFront(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
                 } else {
-                    Button("Run Now") { model.runQueueJobNow(job.id) }.buttonStyle(NeutralGlassButtonStyle())
+                    Button("Run Now") { model.runQueueJobNow(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
                 }
-                Button("Remove") { model.removeQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle())
+                Button("Remove") { model.removeQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .running:
-                Button("Pause") { model.pauseQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle())
-                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle())
+                Button("Pause") { model.pauseQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .paused:
-                if !anyRunning { Button("Resume") { model.resumeQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()) }
-                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle())
+                if !anyRunning { Button("Resume") { model.resumeQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize() }
+                Button("Cancel", role: .cancel) { model.cancelQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .done:
-                Button("Show in Finder", systemImage: "folder") { model.revealQueueOutput(job.output) }.buttonStyle(NeutralGlassButtonStyle())
-                Button("Clear") { model.clearFinishedQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle())
+                Button("Show in Finder", systemImage: "folder") { model.revealQueueOutput(job.output) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                Button("Clear") { model.clearFinishedQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .failed(let text):
-                Button("Copy Details") { model.copyQueueFailure(job.id); model.fail(text) }.buttonStyle(NeutralGlassButtonStyle())
-                Button("Clear") { model.clearFinishedQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle())
+                Button("Copy Details") { model.copyQueueFailure(job.id); model.fail(text) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
+                Button("Clear") { model.clearFinishedQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             case .cancelled:
-                Button("Clear") { model.clearFinishedQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle())
+                Button("Clear") { model.clearFinishedQueueJob(job.id) }.buttonStyle(NeutralGlassButtonStyle()).fixedSize()
             }
         }
         .padding(.horizontal, 14).frame(height: rowHeight)
