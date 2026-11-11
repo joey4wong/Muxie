@@ -314,7 +314,25 @@ struct KnotMark: View {
     private static let image: NSImage? = Bundle.main.url(forResource: "Knot", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
     var body: some View {
         if let image = Self.image {
-            Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+            let base = Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+            base.overlay {
+                TimelineView(.animation) { context in
+                    let cycle = 5.0, sweep = 1.6
+                    let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: cycle)
+                    let p = min(t / sweep, 1)
+                    let eased = p * p * (3 - 2 * p)
+                    let c = -0.3 + eased * 1.6
+                    LinearGradient(stops: [
+                        .init(color: .white.opacity(0), location: c - 0.16),
+                        .init(color: .white.opacity(0.55), location: c),
+                        .init(color: .white.opacity(0), location: c + 0.16)
+                    ], startPoint: .bottomLeading, endPoint: .topTrailing)
+                    .opacity(p < 1 ? 1 : 0)
+                    .blendMode(.plusLighter)
+                }
+                .mask(base)
+                .allowsHitTesting(false)
+            }
         } else {
             Image(nsImage: NSApplication.shared.applicationIconImage).resizable().aspectRatio(contentMode: .fit)
         }
