@@ -4,14 +4,14 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @AppStorage(CompressEncoder.defaultsKey) private var encoderRaw = CompressEncoder.hardware.rawValue
+    @AppStorage(CompressEncoder.defaultsKey) private var encoderRaw = CompressEncoder.software.rawValue
     var body: some View {
         Form {
             Picker("Compress encoder", selection: $encoderRaw) {
                 ForEach(CompressEncoder.allCases) { Text($0.label).tag($0.rawValue) }
             }
             .pickerStyle(.radioGroup)
-            Text((CompressEncoder(rawValue: encoderRaw) ?? .hardware).detail)
+            Text((CompressEncoder(rawValue: encoderRaw) ?? .software).detail)
                 .font(.callout).foregroundStyle(.secondary)
         }
         .padding(20)

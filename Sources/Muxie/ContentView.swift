@@ -34,7 +34,7 @@ struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var targeted = false
     @State private var showCompactInspector = false
-    @AppStorage(CompressEncoder.defaultsKey) private var encoderRaw = CompressEncoder.hardware.rawValue
+    @AppStorage(CompressEncoder.defaultsKey) private var encoderRaw = CompressEncoder.software.rawValue
     var body: some View {
         GeometryReader { geometry in
             if model.sources.isEmpty {
@@ -87,10 +87,10 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if !model.sources.isEmpty && model.exportMode == .compress {
-                    Picker("Encoder", selection: $encoderRaw) {
-                        ForEach(CompressEncoder.allCases) { Text($0.shortLabel).tag($0.rawValue) }
+                    Button { encoderRaw = (encoderRaw == CompressEncoder.hardware.rawValue ? CompressEncoder.software : CompressEncoder.hardware).rawValue } label: {
+                        Image(systemName: "bolt.fill").foregroundStyle(encoderRaw == CompressEncoder.hardware.rawValue ? Color.yellow : Color.secondary)
                     }
-                    .pickerStyle(.menu).help((CompressEncoder(rawValue: encoderRaw) ?? .hardware).detail).disabled(model.importing)
+                    .help("Fast mode: hardware encoding, quicker but larger files").disabled(model.importing)
                 }
                 if !model.sources.isEmpty {
                     Button { model.reset() } label: { Image(systemName: "doc.badge.plus") }.help("New Project").disabled(model.importing)

@@ -9,7 +9,7 @@ enum CompressEncoder: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     static let defaultsKey = "compressEncoder"
     static var current: CompressEncoder {
-        get { UserDefaults.standard.string(forKey: defaultsKey).flatMap(CompressEncoder.init(rawValue:)) ?? .hardware }
+        get { UserDefaults.standard.string(forKey: defaultsKey).flatMap(CompressEncoder.init(rawValue:)) ?? .software }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
     }
     var label: String { self == .hardware ? "Hardware (Apple VideoToolbox)" : "Software (x265)" }
