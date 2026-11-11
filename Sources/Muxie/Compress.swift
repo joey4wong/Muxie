@@ -3,7 +3,7 @@
 
 import Foundation
 
-/// Which H.265 encoder Compress uses. Chosen in Settings; the default is the Apple hardware encoder.
+/// Which H.265 encoder Compress uses. Chosen in the toolbar; the default is the Apple hardware encoder.
 enum CompressEncoder: String, CaseIterable, Identifiable {
     case hardware, software
     var id: String { rawValue }
@@ -13,6 +13,7 @@ enum CompressEncoder: String, CaseIterable, Identifiable {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
     }
     var label: String { self == .hardware ? "Hardware (Apple VideoToolbox)" : "Software (x265)" }
+    var technology: String { self == .hardware ? "Apple hardware acceleration" : "x265 encoder" }
     var shortLabel: String { self == .hardware ? "Fast" : "Best" }
     var detail: String {
         self == .hardware
