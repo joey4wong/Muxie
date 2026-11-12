@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches Info.plist
+        run: |
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Support/Info.plist)"
+          [[ "v$VERSION" == "$GITHUB_REF_NAME" ]] || { echo "Tag $GITHUB_REF_NAME does not match version $VERSION" >&2; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+      - name: Build and test
+        run: ./build.sh && ./test.sh && rm -rf dist/Muxie.app
+      - name: Build release archive and appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          [[ -n "$SPARKLE_PRIVATE_KEY" ]] || { echo 'Add the SPARKLE_PRIVATE_KEY repository secret.' >&2; exit 1; }
+          KEY_FILE="$RUNNER_TEMP/sparkle_ed_key"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY_FILE"
+          SPARKLE_ED_KEY_FILE="$KEY_FILE" ./release.sh
+          rm -f "$KEY_FILE"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "dist/release/Muxie-$VERSION.zip" dist/release/appcast.xml \
+            --title "Muxie $VERSION" --generate-notes
+      - name: Verify appcast
+        run: |
+          sleep 10
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/latest/download/appcast.xml" | grep -q "Muxie-$VERSION.zip"

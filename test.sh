@@ -47,7 +47,9 @@ xcrun swiftc -disable-sandbox -swift-version 5 -target arm64-apple-macosx26.0 \
   "$ROOT/Sources/Muxie/ExportSpace.swift" "$ROOT/Sources/Muxie/IdleSleepActivity.swift" "$ROOT/Sources/Muxie/TempFileRegistry.swift" \
   "$ROOT/Sources/Muxie/ExportQueue.swift" "$ROOT/Sources/Muxie/JobProgress.swift" "$ROOT/Sources/Muxie/VideoHDR.swift" \
   "$ROOT/Sources/Muxie/QueuePersistence.swift" "$ROOT/Sources/Muxie/ExportNotifications.swift" \
-  "$ROOT/Sources/Muxie/AppModel.swift" "$ROOT/Sources/Muxie/BluRayISO.swift" "$ROOT/Tests/Integration.swift" \
+  "$ROOT/Sources/Muxie/AppModel.swift" "$ROOT/Sources/Muxie/AppModel+Queue.swift" "$ROOT/Sources/Muxie/AppModel+Disc.swift" \
+  "$ROOT/Sources/Muxie/AppModel+ReleaseName.swift" "$ROOT/Sources/Muxie/TrackAutoSelect.swift" "$ROOT/Sources/Muxie/SubtitleCharset.swift" \
+  "$ROOT/Sources/Muxie/BluRayISO.swift" "$ROOT/Tests/Integration.swift" \
   -framework UserNotifications -o "$T/integration"
 # The engine under test is the one bundled in the built app (build.sh first), so tests pass without MKVToolNix installed.
 BUNDLED_BIN="${MUXIE_APP:-$ROOT/dist/Muxie.app}/Contents/Resources/bin"

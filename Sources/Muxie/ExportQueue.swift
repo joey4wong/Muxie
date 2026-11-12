@@ -53,6 +53,7 @@ struct QueueJob: Identifiable, Equatable, Sendable, Codable {
     var progressETA: TimeInterval? = nil
     var interruptedNote: String? = nil
     var encoder: CompressEncoder? = nil
+    var quality: CompressQuality? = nil
 
     var isRunning: Bool { if case .running = state { return true }; return false }
     var isPaused: Bool { if case .paused = state { return true }; return false }
@@ -64,7 +65,7 @@ struct QueueJob: Identifiable, Equatable, Sendable, Codable {
         }
     }
 
-    static func snapshot(sources: [MediaSource], tracks: [MediaTrack], mode: ExportMode, output: URL) -> QueueJob {
+    static func snapshot(sources: [MediaSource], tracks: [MediaTrack], mode: ExportMode, output: URL, quality: CompressQuality? = nil) -> QueueJob {
         let snapSources = sources.map { source -> MediaSource in
             guard let iso = source.originURL else { return source }
             var copy = source
@@ -73,7 +74,7 @@ struct QueueJob: Identifiable, Equatable, Sendable, Codable {
             copy.appendedParts = []
             return copy
         }
-        return QueueJob(id: UUID(), sources: snapSources, tracks: tracks, mode: mode, output: output, state: .queued, warning: nil, progressPhase: nil, progressFPS: nil, progressETA: nil, interruptedNote: nil, encoder: mode == .compress ? CompressEncoder.current : nil)
+        return QueueJob(id: UUID(), sources: snapSources, tracks: tracks, mode: mode, output: output, state: .queued, warning: nil, progressPhase: nil, progressFPS: nil, progressETA: nil, interruptedNote: nil, encoder: mode == .compress ? CompressEncoder.current : nil, quality: mode == .compress ? quality : nil)
     }
 
     var statusTitle: String {
@@ -89,7 +90,10 @@ struct QueueJob: Identifiable, Equatable, Sendable, Codable {
 
     var statusSubtitle: String {
         var parts = [mode.label, phaseLabel]
-        if let encoder { parts.append(encoder.technology) }
+        if let encoder {
+            parts.append(encoder.technology)
+            if let summary = quality?.summary(encoder: encoder) { parts.append(summary) }
+        }
         if let progressFPS { parts.append(String(format: "%.0f fps", progressFPS)) }
         if let progressETA, progressETA > 0 { parts.append("ETA \(Self.formatETA(progressETA))") }
         return parts.joined(separator: " · ")

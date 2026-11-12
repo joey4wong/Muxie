@@ -19,10 +19,28 @@ struct Probe: Decodable {
             var pixel_dimensions: String?; var audio_channels: Int?; var audio_sampling_frequency: Double?
             var codec_private_data: String?; var minimum_timestamp: Int64?
             var color_primaries: Int?; var color_transfer_characteristics: Int?; var max_content_light: Int?
+            var max_luminance: Double?
         }
         var id: Int; var type: String; var codec: String; var properties: Properties
     }
     var container: Container; var tracks: [Track]; var errors: [String]?
+}
+enum LanguageTag {
+    /// ISO 639-2/B codes that `Locale.LanguageCode` does not map to two letters.
+    private static let bibliographic = ["chi": "zh", "ger": "de", "fre": "fr", "dut": "nl", "cze": "cs", "gre": "el", "per": "fa", "rum": "ro", "slo": "sk", "ice": "is", "mac": "mk", "may": "ms", "bur": "my", "alb": "sq", "arm": "hy", "baq": "eu", "geo": "ka", "tib": "bo", "wel": "cy", "mao": "mi"]
+    /// Two-letter primary language, or nil for an empty or undetermined tag.
+    static func base(_ code: String?) -> String? {
+        guard let code else { return nil }
+        let primary = code.split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map { String($0).lowercased() } ?? ""
+        if primary.isEmpty || ["und", "mul", "zxx", "mis"].contains(primary) { return nil }
+        if let mapped = bibliographic[primary] { return mapped }
+        if primary.count == 3, let alpha2 = Locale.LanguageCode(primary).identifier(.alpha2) { return alpha2 }
+        return primary
+    }
+    static func matches(wanted: String, ietf: String?, legacy: String?) -> Bool {
+        guard let wantedBase = base(wanted) else { return true }
+        return (base(ietf) ?? base(legacy)) == wantedBase
+    }
 }
 struct MediaTrack: Identifiable, Equatable, Sendable, Codable {
     var id = UUID(); var sourceID: UUID; var trackID: Int; var kind: String; var codec: String
@@ -36,6 +54,8 @@ struct MediaTrack: Identifiable, Equatable, Sendable, Codable {
     var hdrBadge: HDRBadge? = nil
     /// Dolby Vision profile from the source container (nil when the video has no Dolby Vision).
     var dolbyVisionProfile: Int? = nil
+    /// Character set of a text subtitle file that is not UTF-8 (passed to mkvmerge as --sub-charset).
+    var subtitleCharset: String? = nil
     var delayMs: Int = 0
     var syncDriftNumerator: Int?
     var syncDriftDenominator: Int?
@@ -175,6 +195,7 @@ struct ExportPlan: Sendable {
 
     private func appendTrackMetadata(_ args: inout [String], track: MediaTrack, trackID: Int) {
         args += ["--track-name", "\(trackID):\(track.name)", "--language", "\(trackID):\(track.language.isEmpty ? "und" : track.language)", "--default-track-flag", "\(trackID):\(track.isDefault ? "yes" : "no")", "--forced-display-flag", "\(trackID):\(track.isForced ? "yes" : "no")"]
+        if track.kind == "subtitles", let charset = track.subtitleCharset { args += ["--sub-charset", "\(trackID):\(charset)"] }
     }
 
     private func appendSync(_ args: inout [String], track: MediaTrack) {
@@ -248,7 +269,7 @@ enum Engine {
         paths += ["/Applications/MKVToolNix.app/Contents/MacOS/mkvmerge", NSHomeDirectory() + "/Applications/MKVToolNix.app/Contents/MacOS/mkvmerge", "/opt/homebrew/bin/mkvmerge", "/usr/local/bin/mkvmerge"]
         return paths.map { URL(fileURLWithPath: $0) }
     }
-    static var executable: URL? { candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) } }
+    static let executable: URL? = candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     static func identify(_ url: URL, engine: URL, job: RunningJob = RunningJob()) throws -> Probe {
         let result = try job.run(engine: engine, arguments: ["--ui-language", "en_US", "-J", url.path])
         guard result.0 <= 1 else { throw MuxError.message("Cannot read \(url.lastPathComponent):\n" + String(decoding: result.1, as: UTF8.self)) }
@@ -277,6 +298,7 @@ enum Engine {
         guard probe.tracks.count == expected.count else { throw MuxError.message("Output track count verification failed. No output was saved.") }
         for (actual, wanted) in zip(probe.tracks, expected) {
             guard actual.type == wanted.kind && actual.codec == wanted.codec && (actual.properties.track_name ?? "") == wanted.name && (actual.properties.default_track ?? false) == wanted.isDefault && (actual.properties.forced_track ?? false) == wanted.isForced else { throw MuxError.message("Output track verification failed. No output was saved.") }
+            guard LanguageTag.matches(wanted: wanted.language, ietf: actual.properties.language_ietf, legacy: actual.properties.language) else { throw MuxError.message("Output track language verification failed. No output was saved.") }
         }
         if job.cancelled { throw CancellationError() }
         try job.commit { try fm.moveItem(at: staging, to: output) }

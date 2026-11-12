@@ -68,6 +68,53 @@ enum CompressSettings {
     }
 }
 
+enum CompressRateMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case standard, quality, targetSize
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .standard: return "Standard"
+        case .quality: return "Quality"
+        case .targetSize: return "Target Size"
+        }
+    }
+}
+
+/// How Compress sets the video rate. Standard uses the tuned per-resolution defaults of `CompressProfile`.
+struct CompressQuality: Codable, Equatable, Sendable {
+    var mode: CompressRateMode = .standard
+    /// x265 RF chosen in Quality mode; nil means the profile default.
+    var x265RF: Int? = nil
+    /// VideoToolbox quality chosen in Quality mode; nil means the profile default.
+    var vtQuality: Int? = nil
+    var targetGB: Double = 4
+
+    static let x265RFRange = 14...30
+    static let vtQualityRange = 40...80
+    static let targetGBRange = 0.5...200.0
+    static let minimumVideoKbps = 300
+
+    var targetBytes: Int64 { Int64((targetGB * 1_000_000_000).rounded()) }
+
+    func value(for encoder: CompressEncoder, profile: CompressProfile) -> Int {
+        switch (mode, encoder) {
+        case (.quality, .software): return x265RF.map { min(max($0, Self.x265RFRange.lowerBound), Self.x265RFRange.upperBound) } ?? profile.rf
+        case (.quality, .hardware): return vtQuality.map { min(max($0, Self.vtQualityRange.lowerBound), Self.vtQualityRange.upperBound) } ?? profile.quality
+        default: return encoder == .software ? profile.rf : profile.quality
+        }
+    }
+
+    func summary(encoder: CompressEncoder) -> String? {
+        switch mode {
+        case .standard: return nil
+        case .quality:
+            if encoder == .software { return x265RF.map { "RF \($0)" } }
+            return vtQuality.map { "Quality \($0)" }
+        case .targetSize: return String(format: "Target %.1f GB", targetGB)
+        }
+    }
+}
+
 extension Engine {
     static var handbrakeCandidates: [URL] {
         var paths: [String] = []
@@ -76,7 +123,7 @@ extension Engine {
         paths += ["/usr/local/bin/HandBrakeCLI", "/opt/homebrew/bin/HandBrakeCLI"]
         return paths.map { URL(fileURLWithPath: $0) }
     }
-    static var handbrakeExecutable: URL? { handbrakeCandidates.first { FileManager.default.isExecutableFile(atPath: $0.path) } }
+    static let handbrakeExecutable: URL? = handbrakeCandidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
 
     /// Luma bit depth from an HEVCDecoderConfigurationRecord given as hex (as mkvmerge prints it), or nil if it cannot be read.
     static func hevcBitDepth(fromCodecPrivate hex: String?) -> Int? {
@@ -95,7 +142,7 @@ extension Engine {
     /// AAC sources with at most 5.1 channels are copied untouched (no generation loss, no encode time).
     static func audioIsCopied(channels: Int, isAAC: Bool) -> Bool { isAAC && channels <= CompressSettings.maxAACChannels }
 
-    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile, encoder: CompressEncoder = .hardware, sourceAudioChannels: [Int], sourceAudioIsAAC: [Bool] = []) -> [String] {
+    static func handbrakeArguments(input: URL, output: URL, profile: CompressProfile, encoder: CompressEncoder = .hardware, quality: CompressQuality = CompressQuality(), videoBitrateKbps: Int? = nil, deinterlace: Bool = false, sourceAudioChannels: [Int], sourceAudioIsAAC: [Bool] = []) -> [String] {
         var args = [
             "--input", input.path,
             "--output", output.path,
@@ -108,9 +155,16 @@ extension Engine {
             // HandBrake falls back to software decoding for codecs the scan marks as unsupported (e.g. VC-1).
             // Not used with x265: the output is bit-identical and the CPU-bound encoder gains nothing.
             args += ["--enable-hw-decoding", "videotoolbox"]
-            args += ["--encoder-preset", CompressSettings.encoderPreset, "--quality", String(profile.quality)]
+            args += ["--encoder-preset", CompressSettings.encoderPreset]
         } else {
-            args += ["--encoder-preset", CompressSettings.x265Preset, "--encopts", CompressSettings.x265ExtraOptions, "--quality", String(profile.rf)]
+            args += ["--encoder-preset", CompressSettings.x265Preset, "--encopts", CompressSettings.x265ExtraOptions]
+        }
+        if let videoBitrateKbps {
+            args += ["--vb", String(videoBitrateKbps)]
+            // VideoToolbox has no multi-pass mode.
+            if encoder == .software { args += ["--multi-pass", "--turbo"] }
+        } else {
+            args += ["--quality", String(quality.value(for: encoder, profile: profile))]
         }
         args += [
             "--maxWidth", String(profile.maxWidth),
@@ -119,6 +173,7 @@ extension Engine {
             "--crop-mode", "none",
             "--subtitle", "none",
         ]
+        if deinterlace { args += ["--comb-detect", "--decomb"] }
         if sourceAudioChannels.isEmpty {
             args += ["--audio", "none"]
         } else {
@@ -137,7 +192,16 @@ extension Engine {
         return args
     }
 
-    static func exportCompressed(plan: ExportPlan, output: URL, mkvmerge: URL, handbrake: URL, job: RunningJob, encoder: CompressEncoder = CompressEncoder.current, progress: @escaping @Sendable (JobProgress) -> Void) throws -> String? {
+    /// Video bitrate that fills `targetBytes` over `seconds`, after an estimate for the audio and 2% container overhead.
+    static func targetVideoBitrateKbps(targetBytes: Int64, seconds: Double, audioChannels: [Int]) -> Int? {
+        guard seconds > 0, targetBytes > 0 else { return nil }
+        let audioKbps = audioChannels.reduce(0) { $0 + CompressSettings.audioBitrateKbps(channelCount: CompressSettings.encodedChannelCount(sourceChannels: $1)) }
+        let totalKbps = Double(targetBytes) * 8 * 0.98 / seconds / 1000
+        let video = Int(totalKbps) - audioKbps
+        return video >= CompressQuality.minimumVideoKbps ? video : nil
+    }
+
+    static func exportCompressed(plan: ExportPlan, output: URL, mkvmerge: URL, handbrake: URL, job: RunningJob, encoder: CompressEncoder = CompressEncoder.current, quality: CompressQuality = CompressQuality(), progress: @escaping @Sendable (JobProgress) -> Void) throws -> String? {
         let fm = FileManager.default
         let target = output.standardizedFileURL.resolvingSymlinksInPath()
         guard !plan.sources.contains(where: { $0.url.standardizedFileURL.resolvingSymlinksInPath() == target }) else {
@@ -178,7 +242,19 @@ extension Engine {
         let sourceAudioChannels = sourceAudioTracks.map { $0.properties.audio_channels ?? 2 }
         let sourceAudioIsAAC = sourceAudioTracks.map { $0.codec.uppercased().contains("AAC") }
         let profile = CompressProfile(height: sourceHeight)
-        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile, encoder: encoder, sourceAudioChannels: sourceAudioChannels, sourceAudioIsAAC: sourceAudioIsAAC)
+        let sourceCodec = plan.orderedTracks.first(where: { $0.kind == "video" })?.codec.uppercased() ?? ""
+        let isMPEG2 = sourceCodec.contains("MPEG-1/2") || sourceCodec.contains("MPEG-2")
+        var videoBitrate: Int? = nil
+        if quality.mode == .targetSize {
+            let seconds = Double(remuxProbe.container.properties?.duration ?? 0) / 1_000_000_000
+            guard seconds > 0 else { throw MuxError.message("The running time of this video cannot be read, so a target size cannot be used. Choose Standard or Quality.") }
+            let allAudioChannels = plan.orderedTracks.filter { $0.kind == "audio" }.map { $0.audioChannels ?? 2 }
+            guard let kbps = targetVideoBitrateKbps(targetBytes: quality.targetBytes, seconds: seconds, audioChannels: allAudioChannels) else {
+                throw MuxError.message("The target size is too small for this video's running time. Choose a larger size.")
+            }
+            videoBitrate = kbps
+        }
+        let hbArgs = handbrakeArguments(input: remuxStaging, output: encodeStaging, profile: profile, encoder: encoder, quality: quality, videoBitrateKbps: videoBitrate, deinterlace: sourceHeight <= 576 && isMPEG2, sourceAudioChannels: sourceAudioChannels, sourceAudioIsAAC: sourceAudioIsAAC)
         let hbResult = try job.runHandBrake(engine: handbrake, arguments: hbArgs) { update in
             var scaled = update
             scaled.value = 0.10 + update.value * 0.82
@@ -229,6 +305,13 @@ extension Engine {
            video.properties.color_transfer_characteristics != transfer {
             throw MuxError.message("Compressed output lost the HDR transfer characteristics.")
         }
+        var notes: [String] = []
+        let sourceVideo = remuxProbe.tracks.first(where: { $0.type == "video" })?.properties
+        let hadMastering = sourceVideo?.max_luminance != nil || sourceVideo?.max_content_light != nil
+        let keptMastering = video.properties.max_luminance != nil || video.properties.max_content_light != nil
+        if hdrSource == 16, hadMastering, !keptMastering {
+            notes.append("The HDR10 mastering metadata (mastering display and MaxCLL) was not kept. Players fall back to default brightness mapping.")
+        }
         let finalizeArgs = plan.compressFinalizeArguments(output: finalStaging, encodedURL: encodeStaging, encodedProbe: encodedProbe)
         let finalizeResult = try job.run(engine: mkvmerge, arguments: finalizeArgs) { update in
             var scaled = update
@@ -252,8 +335,10 @@ extension Engine {
             guard typeOK && nameOK && defaultOK && forcedOK && codecOK else {
                 throw MuxError.message("Output track verification failed. No output was saved.")
             }
+            guard LanguageTag.matches(wanted: wanted.language, ietf: actual.properties.language_ietf, legacy: actual.properties.language) else {
+                throw MuxError.message("Output track language verification failed. No output was saved.")
+            }
         }
-        var notes: [String] = []
         if let wantedDV = plan.orderedTracks.first(where: { $0.kind == "video" })?.dolbyVisionProfile,
            VideoHDR.dolbyVisionProfile(fileURL: finalStaging) == nil {
             notes.append(wantedDV == 5
@@ -263,6 +348,19 @@ extension Engine {
         if job.cancelled { throw CancellationError() }
         try job.commit { try fm.moveItem(at: finalStaging, to: output) }
         return notes.isEmpty ? nil : notes.joined(separator: "\n\n")
+    }
+
+    /// Overall fraction done across HandBrake passes ("task 1 of 2" is the first pass of a two-pass encode).
+    static func handBrakeOverallFraction(percent: Double, task: Int?, taskCount: Int?) -> Double {
+        let pass = min(1, max(0, percent / 100))
+        guard let task, let taskCount, taskCount > 1, task >= 1 else { return pass }
+        return min(1, (Double(min(task, taskCount) - 1) + pass) / Double(taskCount))
+    }
+
+    static func parseHandBrakeTask(_ line: String) -> (task: Int, count: Int)? {
+        guard let range = line.range(of: #"task\s+\d+\s+of\s+\d+"#, options: .regularExpression) else { return nil }
+        let numbers = line[range].split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        return numbers.count == 2 ? (numbers[0], numbers[1]) : nil
     }
 
     static func parseHandBrakeEncodingLine(_ line: String) -> (percent: Double, fps: Double?, avgFPS: Double?, etaSeconds: TimeInterval?)? {
@@ -365,10 +463,12 @@ extension RunningJob {
         DispatchQueue.global(qos: .utility).async {
             func report(_ line: String) {
                 guard let parsed = Engine.parseHandBrakeEncodingLine(line) else { return }
-                var update = JobProgress.fraction(min(1, max(0, parsed.percent / 100)))
+                let task = Engine.parseHandBrakeTask(line)
+                var update = JobProgress.fraction(Engine.handBrakeOverallFraction(percent: parsed.percent, task: task?.task, taskCount: task?.count))
                 update.phase = .encode
                 update.fps = parsed.avgFPS ?? parsed.fps
-                update.etaSeconds = parsed.etaSeconds
+                // A pass's ETA covers only that pass; it is the job's ETA only on the last one.
+                update.etaSeconds = (task.map { $0.task >= $0.count } ?? true) ? parsed.etaSeconds : nil
                 progress(update)
             }
             var scanner = HandBrakeProgressScanner()

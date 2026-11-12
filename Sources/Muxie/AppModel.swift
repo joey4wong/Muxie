@@ -24,18 +24,22 @@ import UniformTypeIdentifiers
     @Published var compressEligible = true
     @Published var queueJobs: [QueueJob] = []
     @Published var queueResumePending = false
+    @Published var compressQuality = CompressQuality()
     var job: RunningJob?
-    private var persistQueueTask: Task<Void, Never>?
-    private var sessionNotifications = Set<UUID>()
-    private var isoMounts: [UUID: BluRayMount] = [:]
+    var persistQueueTask: Task<Void, Never>?
+    var sessionNotifications = Set<UUID>()
+    var isoMounts: [UUID: BluRayMount] = [:]
     /// Per queue job (a paused job keeps its disc mounted while another job runs), then per source.
-    private var queueISOMounts: [UUID: [UUID: BluRayMount]] = [:]
-    private var queueRunning: [UUID: RunningJob] = [:]
-    private var activeQueueTasks = 0
+    var queueISOMounts: [UUID: [UUID: BluRayMount]] = [:]
+    var queueRunning: [UUID: RunningJob] = [:]
+    var activeQueueTasks = 0
     /// Set when the user pauses: the queue waits for Resume or Run Now instead of starting the next job.
-    private var queueHoldFlag = false
-    private var queueHeld: Bool { queueHoldFlag && queueJobs.contains { $0.isPaused } }
-    private var queueSleeping = false
+    var queueHoldFlag = false
+    var queueSleeping = false
+    /// Compress profile of the checked video, for showing the default quality values.
+    var compressProfile: CompressProfile {
+        CompressProfile(height: tracks.first(where: { $0.kind == "video" && $0.enabled })?.pixelHeight ?? 1080)
+    }
     var active: MediaTrack? { tracks.first { $0.id == selected } }
     var enabled: [MediaTrack] { tracks.filter(\.enabled) }
     var busy: Bool { importing || queueHasPendingExport }
@@ -88,10 +92,10 @@ import UniformTypeIdentifiers
             if sources.contains(where: { $0.displayURL.standardizedFileURL.resolvingSymlinksInPath() == canonical }) { continue }
             if url.pathExtension.lowercased() == "iso" {
                 if !isoMounts.isEmpty || sources.contains(where: { $0.originURL != nil }) {
-                    failures.append("Only one Blu-ray ISO can be open at a time.")
+                    failures.append("Only one disc image can be open at a time.")
                     continue
                 }
-                if !sources.isEmpty { failures.append("Open the Blu-ray ISO before adding other files."); continue }
+                if !sources.isEmpty { failures.append("Open the disc image before adding other files."); continue }
             }
             var openedMount: BluRayMount?
             do {
@@ -111,12 +115,12 @@ import UniformTypeIdentifiers
                     originURL = nil
                     sourceBytes = Int64((try? importURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
                 }
-                let (probe, fileDVProfile) = try await Task.detached(priority: .userInitiated) { () throws -> (Probe, Int?) in
+                let (probe, fileDVProfile, subtitleCharset) = try await Task.detached(priority: .userInitiated) { () throws -> (Probe, Int?, String?) in
                     let probe = try Engine.identify(importURL, engine: engine)
                     let container = (probe.container.type ?? "").lowercased()
                     let hasHEVC = probe.tracks.contains { $0.type == "video" && ($0.codec.uppercased().contains("HEVC") || $0.codec.uppercased().contains("H.265")) }
                     let readable = container.contains("matroska") || container.contains("mp4") || container.contains("quicktime")
-                    return (probe, hasHEVC && readable ? VideoHDR.dolbyVisionProfile(fileURL: importURL) : nil)
+                    return (probe, hasHEVC && readable ? VideoHDR.dolbyVisionProfile(fileURL: importURL) : nil, SubtitleCharset.detect(fileURL: importURL))
                 }.value
                 let supported = probe.tracks.filter { ["video", "audio", "subtitles"].contains($0.type) }
                 guard !supported.isEmpty else { throw MuxError.message("\(url.lastPathComponent) contains no supported tracks.") }
@@ -134,8 +138,9 @@ import UniformTypeIdentifiers
                     let pixelHeight = t.properties.pixel_dimensions.flatMap { Int($0.split(separator: "x").last ?? "") }
                     let dvProfile = t.type == "video" ? (fileDVProfile ?? VideoHDR.dolbyVisionProfile(codecPrivateHex: t.properties.codec_private_data)) : nil
                     let hdr = t.type == "video" ? (dvProfile != nil ? .dolbyVision : VideoHDR.badge(transfer: t.properties.color_transfer_characteristics, codecPrivateHex: t.properties.codec_private_data)) : nil
-                    added.append(MediaTrack(sourceID: sourceID, trackID: t.id, kind: t.type, codec: t.codec, name: t.properties.track_name ?? "", language: t.properties.language_ietf ?? t.properties.language ?? "und", isDefault: isPrimary ? (t.properties.default_track ?? false) : false, isForced: t.properties.forced_track ?? false, enabled: false, detail: detail, audioChannels: t.type == "audio" ? t.properties.audio_channels : nil, isAAC: t.type == "audio" ? t.codec.uppercased().contains("AAC") : nil, pixelHeight: pixelHeight, codecPrivateHex: t.type == "video" ? t.properties.codec_private_data : nil, colorTransfer: t.type == "video" ? t.properties.color_transfer_characteristics : nil, hdrBadge: hdr, dolbyVisionProfile: dvProfile))
+                    added.append(MediaTrack(sourceID: sourceID, trackID: t.id, kind: t.type, codec: t.codec, name: t.properties.track_name ?? "", language: t.properties.language_ietf ?? t.properties.language ?? "und", isDefault: isPrimary ? (t.properties.default_track ?? false) : false, isForced: t.properties.forced_track ?? false, enabled: false, detail: detail, audioChannels: t.type == "audio" ? t.properties.audio_channels : nil, isAAC: t.type == "audio" ? t.codec.uppercased().contains("AAC") : nil, pixelHeight: pixelHeight, codecPrivateHex: t.type == "video" ? t.properties.codec_private_data : nil, colorTransfer: t.type == "video" ? t.properties.color_transfer_characteristics : nil, hdrBadge: hdr, dolbyVisionProfile: dvProfile, subtitleCharset: t.type == "subtitles" ? subtitleCharset : nil))
                 }
+                if isPrimary { TrackAutoSelect.apply(&added) }
                 tracks += added
             } catch {
                 if let openedMount { BluRayISO.detach(openedMount) }
@@ -158,23 +163,6 @@ import UniformTypeIdentifiers
             && (video.pixelHeight ?? 9999) <= 1080
         compressEligible = !already
         if !compressEligible && exportMode == .compress { exportMode = .mux }
-    }
-    func restorePersistedQueue() {
-        guard queueJobs.isEmpty, let saved = QueuePersistence.load() else { return }
-        queueJobs = saved.jobs.map { item in
-            var job = item.job
-            if item.wasInterrupted { job.interruptedNote = "Will restart from the beginning." }
-            return job
-        }
-        queueHoldFlag = saved.hold
-        queueResumePending = saved.resumePending || saved.jobs.contains(where: \.wasInterrupted)
-        if !queueResumePending { scheduleNextQueueJob() }
-    }
-    func continuePersistedQueue() {
-        queueResumePending = false
-        queueHoldFlag = false
-        schedulePersistedSave()
-        scheduleNextQueueJob()
     }
     func hdrCompressWarning() -> String? {
         guard exportMode == .compress else { return nil }
@@ -233,46 +221,13 @@ import UniformTypeIdentifiers
         guard !importing else { return }
         detachAllISO()
         sources = []; tracks = []; selected = nil; completed = nil; warning = nil; filter = "All"; trackPage = 0
-        exportMode = .mux; compressEligible = true
+        exportMode = .mux; compressEligible = true; compressQuality = CompressQuality()
     }
-    func recoverStaleISOMounts() { BluRayISO.recoverStaleMounts(); isoMounts = [:] }
     func prepareForQuit() {
         QueuePersistence.saveForTermination(jobs: queueJobs, hold: queueHoldFlag, resumePending: queueResumePending)
         queueJobs.removeAll()
         detachAllISO()
         detachAllQueueISO()
-    }
-    private func detachAllISO() {
-        for mount in isoMounts.values { BluRayISO.detach(mount) }
-        isoMounts = [:]
-    }
-    private func detachQueueISO(jobID: UUID) {
-        for mount in (queueISOMounts.removeValue(forKey: jobID) ?? [:]).values { BluRayISO.detach(mount) }
-    }
-    private func detachAllQueueISO() {
-        for mounts in queueISOMounts.values { for mount in mounts.values { BluRayISO.detach(mount) } }
-        queueISOMounts = [:]
-    }
-    private func ensureISOMounted() async throws {
-        for index in sources.indices {
-            guard let iso = sources[index].originURL, isoMounts[sources[index].id] == nil else { continue }
-            let mount = try await Task.detached(priority: .userInitiated) { try BluRayISO.attach(iso: iso) }.value
-            isoMounts[sources[index].id] = mount
-            sources[index].url = mount.mediaURL
-            sources[index].byteSize = mount.inputBytes
-            sources[index].appendedParts = mount.extraParts
-        }
-    }
-    private func ensureQueueISOMounted(jobID: UUID, sources: inout [MediaSource]) async throws {
-        for index in sources.indices {
-            guard let iso = sources[index].originURL, queueISOMounts[jobID]?[sources[index].id] == nil else { continue }
-            let sourceID = sources[index].id
-            let mount = try await Task.detached(priority: .userInitiated) { try BluRayISO.attach(iso: iso) }.value
-            queueISOMounts[jobID, default: [:]][sourceID] = mount
-            sources[index].url = mount.mediaURL
-            sources[index].byteSize = mount.inputBytes
-            sources[index].appendedParts = mount.extraParts
-        }
     }
     func exportPanel() {
         guard canExport, let source = sources.first else { return }
@@ -303,285 +258,6 @@ import UniformTypeIdentifiers
             Task { @MainActor in self?.enqueueExport(to: url) }
         }
     }
-    /// Standard release name for films that are compressed (Compress mode) or already HEVC 10-bit 1080p or below:
-    /// Title.Year.1080p.BluRay.x265.10bit.AAC-Joey.mkv (4K in place of 1080p for UHD). Nil if no year can be found in the file name.
-    func sceneName(from baseName: String) -> String? {
-        guard exportMode == .compress else { return nil }
-        let cleaned = baseName.replacingOccurrences(of: "-compressed", with: "").replacingOccurrences(of: "-muxie", with: "")
-        let words = cleaned.split(whereSeparator: { " ._()[]".contains($0) }).map(String.init)
-        guard let yearIndex = words.lastIndex(where: { $0.count == 4 && $0.hasPrefix("19") || $0.count == 4 && $0.hasPrefix("20") }),
-              words[yearIndex].allSatisfy(\.isNumber), yearIndex > 0 else { return nil }
-        let bad = CharacterSet(charactersIn: "/:\\*?\"<>|,'’!")
-        let title = words[..<yearIndex].map { String($0.unicodeScalars.filter { !bad.contains($0) }) }.filter { !$0.isEmpty }.joined(separator: ".")
-        guard !title.isEmpty else { return nil }
-        let height = tracks.first(where: { $0.kind == "video" && $0.enabled })?.detail.split(separator: "×").last.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) } ?? 1080
-        let res = height > 1080 ? "4K" : "1080p"
-        let codec = CompressEncoder.current == .hardware ? "HEVC" : "x265"
-        let fromISO = sources.first?.originURL?.pathExtension.lowercased() == "iso"
-        let sourceTag = releaseSourceTag(baseName: cleaned, fromISO: fromISO)
-        let hdrTag: String? = {
-            guard let badge = tracks.first(where: { $0.kind == "video" && $0.enabled })?.hdrBadge else { return nil }
-            switch badge {
-            case .dolbyVision: return "DV"
-            case .hdr10Plus, .hdr10: return "HDR"
-            case .hlg: return "HLG"
-            }
-        }()
-        let hasAudio = tracks.contains { $0.enabled && $0.kind == "audio" }
-        var parts = [title, words[yearIndex], res]
-        if let sourceTag { parts.append(sourceTag) }
-        if let hdrTag { parts.append(hdrTag) }
-        parts += [codec, "10bit"]
-        if hasAudio { parts.append("AAC") }
-        parts.append("Joey")
-        return parts.joined(separator: ".") + ".mkv"
-    }
-    private func releaseSourceTag(baseName: String, fromISO: Bool) -> String? {
-        if fromISO { return "BluRay" }
-        let upper = baseName.uppercased()
-        if upper.contains("WEB-DL") || upper.contains("WEBDL") { return "WEB-DL" }
-        if upper.contains("WEBRIP") { return "WEBRip" }
-        if upper.contains("HDTV") { return "HDTV" }
-        if upper.contains("BLURAY") || upper.contains("BLU-RAY") { return "BluRay" }
-        return nil
-    }
-    func enqueueExport(to output: URL) {
-        let target = output.standardizedFileURL.resolvingSymlinksInPath()
-        let taken = queueJobs.filter(\.isPending).map { $0.output.standardizedFileURL.resolvingSymlinksInPath() }
-        if taken.contains(target) {
-            fail("Another queued export already uses this output path.")
-            return
-        }
-        queueJobs.append(QueueJob.snapshot(sources: sources, tracks: tracks, mode: exportMode, output: output))
-        ExportNotifications.requestAuthorizationIfNeeded()
-        schedulePersistedSave()
-        reset()
-        scheduleNextQueueJob()
-    }
-    private func schedulePersistedSave() {
-        persistQueueTask?.cancel()
-        let jobs = queueJobs
-        let hold = queueHoldFlag
-        let resume = queueResumePending
-        persistQueueTask = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled else { return }
-            QueuePersistence.save(jobs: jobs, hold: hold, resumePending: resume)
-        }
-    }
-    /// One job runs at a time. A paused job does not count as running, so another job can run meanwhile.
-    private func scheduleNextQueueJob() {
-        if queueJobs.contains(where: { $0.isRunning }) { return }
-        if queueHeld { endQueueSleep(); return }
-        if let next = queueJobs.first(where: { $0.state == .queued }) { startQueueJob(next.id); return }
-        // Nothing else is waiting: carry on with a paused job instead of leaving it forgotten.
-        if let paused = queueJobs.first(where: { $0.isPaused }) { resumeQueueJob(paused.id); return }
-        guard activeQueueTasks == 0 else { return }
-        let failedCount = queueJobs.filter { if case .failed = $0.state { return true }; return false }.count
-        if failedCount > 0 { fail(failedCount == 1 ? "1 queued export failed. Open the export queue for details." : "\(failedCount) queued exports failed. Open the export queue for details.") }
-        if !queueJobs.contains(where: \.isPending) {
-            let doneCount = queueJobs.filter { $0.state == .done }.count
-            if doneCount > 0 || failedCount > 0 { ExportNotifications.notifyQueueSummary(done: doneCount, failed: failedCount) }
-            QueuePersistence.clear()
-        }
-        schedulePersistedSave()
-        endQueueSleep()
-        ExportActivity.shared.active = false
-        ExportActivity.shared.cancel = nil
-        if ExportActivity.shared.terminating { NSApp.reply(toApplicationShouldTerminate: true) }
-    }
-    private func beginQueueSleep() {
-        if !queueSleeping { IdleSleepActivity.begin(); queueSleeping = true }
-    }
-    private func endQueueSleep() {
-        if queueSleeping { IdleSleepActivity.end(); queueSleeping = false }
-    }
-    private func startQueueJob(_ id: UUID) {
-        guard let index = queueJobs.firstIndex(where: { $0.id == id }), queueJobs[index].state == .queued else { return }
-        queueHoldFlag = false
-        beginQueueSleep()
-        queueJobs[index].state = .running(progress: 0)
-        let running = RunningJob()
-        queueRunning[id] = running
-        ExportActivity.shared.active = true
-        ExportActivity.shared.cancel = { [weak self] in MainActor.assumeIsolated { self?.queueRunning.values.forEach { $0.cancel() } } }
-        activeQueueTasks += 1
-        Task { @MainActor in
-            await runQueueJob(id, running: running)
-            activeQueueTasks -= 1
-            scheduleNextQueueJob()
-        }
-    }
-    func pauseQueueJob(_ id: UUID) {
-        guard let index = queueJobs.firstIndex(where: { $0.id == id }), case .running(let value) = queueJobs[index].state else { return }
-        queueRunning[id]?.pause()
-        queueJobs[index].state = .paused(progress: value)
-        queueHoldFlag = true
-        endQueueSleep()
-    }
-    /// Resume a paused job. Only while no other job is running.
-    func resumeQueueJob(_ id: UUID) {
-        guard !queueJobs.contains(where: { $0.isRunning }),
-              let index = queueJobs.firstIndex(where: { $0.id == id }), case .paused(let value) = queueJobs[index].state else { return }
-        queueHoldFlag = false
-        beginQueueSleep()
-        queueJobs[index].state = .running(progress: value)
-        queueRunning[id]?.resume()
-    }
-    /// Start a waiting job now. Only while no other job is running (for example while one is paused); the paused job stays paused.
-    func runQueueJobNow(_ id: UUID) {
-        guard !queueJobs.contains(where: { $0.isRunning }),
-              let index = queueJobs.firstIndex(where: { $0.id == id }), queueJobs[index].state == .queued else { return }
-        moveQueueJobToFront(id)
-        startQueueJob(id)
-    }
-    /// Put a waiting job first among the waiting jobs, so it runs next.
-    func moveQueueJobToFront(_ id: UUID) {
-        guard let index = queueJobs.firstIndex(where: { $0.id == id }), queueJobs[index].state == .queued,
-              let firstWaiting = queueJobs.firstIndex(where: { $0.state == .queued }), firstWaiting < index else { return }
-        let moved = queueJobs.remove(at: index)
-        queueJobs.insert(moved, at: firstWaiting)
-    }
-    private func runQueueJob(_ jobID: UUID, running: RunningJob) async {
-        progress = 0
-        var workingSources = self[job: jobID].sources
-        let mode = self[job: jobID].mode
-        let output = self[job: jobID].output
-        let planTracks = self[job: jobID].tracks
-        defer {
-            detachQueueISO(jobID: jobID)
-            queueRunning[jobID] = nil
-        }
-        if let missing = missingQueueSources(job: self[job: jobID]) {
-            self[job: jobID].state = .failed(missing)
-            progress = 0
-            notifyQueueJob(self[job: jobID])
-            return
-        }
-        do {
-            try await ensureQueueISOMounted(jobID: jobID, sources: &workingSources)
-        } catch {
-            self[job: jobID].state = .failed(error.localizedDescription)
-            progress = 0
-            return
-        }
-        let plan = ExportPlan(sources: workingSources, tracks: planTracks)
-        guard let engine = Engine.executable else {
-            self[job: jobID].state = .failed("The bundled mkvmerge is missing. Reinstall Muxie.")
-            return
-        }
-        if mode == .compress, Engine.handbrakeExecutable == nil {
-            self[job: jobID].state = .failed("The bundled HandBrakeCLI is missing. Reinstall Muxie.")
-            return
-        }
-        do {
-            try ExportSpace.verifySpace(mode: mode, plan: plan, destination: output.deletingLastPathComponent())
-        } catch let err as MuxError {
-            self[job: jobID].state = .failed(err.localizedDescription)
-            return
-        } catch {
-            self[job: jobID].state = .failed(error.localizedDescription)
-            return
-        }
-        do {
-            let handbrake = Engine.handbrakeExecutable
-            // The encoder chosen when the job was queued; the toolbar toggle may have changed since.
-            let encoder = self[job: jobID].encoder ?? CompressEncoder.current
-            let warnings = try await Task.detached(priority: .userInitiated) { [running] in
-                if mode == .compress, let handbrake {
-                    return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running, encoder: encoder) { update in
-                        Task { @MainActor in self.updateQueueProgress(jobID: jobID, update: update) }
-                    }
-                }
-                return try Engine.export(plan: plan, output: output, engine: engine, job: running) { update in
-                    Task { @MainActor in self.updateQueueProgress(jobID: jobID, update: update) }
-                }
-            }.value
-            self[job: jobID].warning = warnings
-            self[job: jobID].state = .done
-            progress = 1
-            notifyQueueJob(self[job: jobID])
-        } catch is CancellationError {
-            self[job: jobID].state = .cancelled
-            progress = 0
-        } catch {
-            self[job: jobID].state = .failed(error.localizedDescription)
-            progress = 0
-            notifyQueueJob(self[job: jobID])
-        }
-        schedulePersistedSave()
-    }
-    private func missingQueueSources(job: QueueJob) -> String? {
-        let fm = FileManager.default
-        for source in job.sources {
-            let path = (source.originURL ?? source.url).path
-            if !fm.fileExists(atPath: path) { return "Source file is missing: \(URL(fileURLWithPath: path).lastPathComponent)" }
-        }
-        return nil
-    }
-    private func notifyQueueJob(_ job: QueueJob) {
-        guard !sessionNotifications.contains(job.id) else { return }
-        sessionNotifications.insert(job.id)
-        switch job.state {
-        case .done:
-            ExportNotifications.notify(title: "Export finished", body: job.output.lastPathComponent, output: job.output)
-        case .failed(let text):
-            ExportNotifications.notify(title: "Export failed", body: text.components(separatedBy: .newlines).first ?? job.output.lastPathComponent, output: nil)
-        default: break
-        }
-    }
-    /// Job lookup by id. Writes to a job that no longer exists are ignored.
-    private subscript(job id: UUID) -> QueueJob {
-        get { queueJobs.first { $0.id == id } ?? QueueJob(id: id, sources: [], tracks: [], mode: .mux, output: URL(fileURLWithPath: "/"), state: .cancelled, warning: nil) }
-        set { if let i = queueJobs.firstIndex(where: { $0.id == id }) { queueJobs[i] = newValue } }
-    }
-    private func updateQueueProgress(jobID: UUID, update: JobProgress) {
-        guard let index = queueJobs.firstIndex(where: { $0.id == jobID }) else { return }
-        switch queueJobs[index].state {
-        case .running:
-            queueJobs[index].state = .running(progress: update.value)
-            queueJobs[index].progressPhase = update.phase
-            queueJobs[index].progressFPS = update.fps
-            queueJobs[index].progressETA = update.etaSeconds
-        case .paused:
-            queueJobs[index].state = .paused(progress: update.value)
-            queueJobs[index].progressPhase = update.phase
-            queueJobs[index].progressFPS = update.fps
-            queueJobs[index].progressETA = update.etaSeconds
-        default: return
-        }
-        progress = update.value
-    }
-    func cancelQueueJob(_ id: UUID) {
-        guard let index = queueJobs.firstIndex(where: { $0.id == id }) else { return }
-        switch queueJobs[index].state {
-        case .running, .paused: queueRunning[id]?.cancel()
-        case .queued: queueJobs[index].state = .cancelled
-        default: break
-        }
-    }
-    func removeQueueJob(_ id: UUID) {
-        guard let index = queueJobs.firstIndex(where: { $0.id == id }) else { return }
-        switch queueJobs[index].state {
-        case .running, .paused: queueRunning[id]?.cancel()
-        case .queued: queueJobs.remove(at: index)
-        case .done, .failed, .cancelled: queueJobs.remove(at: index)
-        }
-        schedulePersistedSave()
-    }
-    func clearFinishedQueueJob(_ id: UUID) {
-        guard let index = queueJobs.firstIndex(where: { $0.id == id }) else { return }
-        switch queueJobs[index].state {
-        case .done, .failed, .cancelled: queueJobs.remove(at: index)
-        default: break
-        }
-    }
-    func revealQueueOutput(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-    func copyQueueFailure(_ id: UUID) {
-        guard let job = queueJobs.first(where: { $0.id == id }), case .failed(let text) = job.state else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
     /// Direct export for integration tests (bypasses the queue UI).
     func export(to output: URL) async {
         guard canExport || (!sources.isEmpty && Engine.executable != nil), let engine = Engine.executable else { return }
@@ -603,9 +279,10 @@ import UniformTypeIdentifiers
             let mode = exportMode
             let handbrake = Engine.handbrakeExecutable
             let encoder = CompressEncoder.current
+            let quality = compressQuality
             let warnings = try await Task.detached(priority: .userInitiated) { [weak self] in
                 if mode == .compress, let handbrake {
-                    return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running, encoder: encoder) { [weak self] update in
+                    return try Engine.exportCompressed(plan: plan, output: output, mkvmerge: engine, handbrake: handbrake, job: running, encoder: encoder, quality: quality) { [weak self] update in
                         Task { @MainActor in self?.progress = update.value }
                     }
                 }
@@ -619,12 +296,6 @@ import UniformTypeIdentifiers
         job = nil
     }
     func reveal() { if let url = completed { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
-    func waitForQueueIdle() async {
-        while queueHasPendingExport || activeQueueTasks > 0 {
-            await Task.yield()
-            try? await Task.sleep(nanoseconds: 50_000_000)
-        }
-    }
 }
 
 final class ExportActivity { static let shared = ExportActivity(); var active = false; var terminating = false; var cancel: (() -> Void)? }
