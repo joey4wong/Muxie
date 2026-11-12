@@ -34,6 +34,7 @@ struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var targeted = false
     @State private var showCompactInspector = false
+    @State private var showQuality = false
     @AppStorage(CompressEncoder.defaultsKey) private var encoderRaw = CompressEncoder.software.rawValue
     var body: some View {
         GeometryReader { geometry in
@@ -91,6 +92,13 @@ struct ContentView: View {
                         Image(systemName: "bolt.fill").foregroundStyle(encoderRaw == CompressEncoder.hardware.rawValue ? Color.yellow : Color.secondary)
                     }
                     .help("Fast mode: hardware encoding, quicker but larger files").disabled(model.importing)
+                    Button { showQuality.toggle() } label: {
+                        Image(systemName: "slider.horizontal.3").foregroundStyle(model.compressQuality.mode == .standard ? Color.secondary : Color.yellow)
+                    }
+                    .help("Compress quality").disabled(model.importing)
+                    .popover(isPresented: $showQuality, arrowEdge: .bottom) {
+                        CompressQualityPanel(encoder: CompressEncoder(rawValue: encoderRaw) ?? .software).environmentObject(model)
+                    }
                 }
                 if !model.sources.isEmpty {
                     Button { model.reset() } label: { Image(systemName: "doc.badge.plus") }.help("New Project").disabled(model.importing)
@@ -291,6 +299,50 @@ struct ContentView: View {
             }
         }.padding(.horizontal, 16).frame(height: 40)
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 15)).padding(.horizontal, 12)
+    }
+}
+struct CompressQualityPanel: View {
+    @EnvironmentObject var model: AppModel
+    let encoder: CompressEncoder
+    var body: some View {
+        let profile = model.compressProfile
+        VStack(alignment: .leading, spacing: 14) {
+            Picker("Rate", selection: $model.compressQuality.mode) {
+                ForEach(CompressRateMode.allCases) { mode in Text(mode.label).tag(mode) }
+            }.pickerStyle(.segmented).labelsHidden()
+            switch model.compressQuality.mode {
+            case .standard:
+                Text(encoder == .software ? "x265 RF \(profile.rf), tuned for this resolution." : "VideoToolbox quality \(profile.quality), tuned for this resolution.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            case .quality:
+                if encoder == .software {
+                    let range = CompressQuality.x265RFRange
+                    let value = model.compressQuality.x265RF ?? profile.rf
+                    Text("RF \(value)").font(.system(size: 12, weight: .medium, design: .monospaced))
+                    Slider(value: Binding(get: { Double(value) }, set: { model.compressQuality.x265RF = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
+                    Text("Lower RF: better picture, bigger file. Default \(profile.rf).").font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    let range = CompressQuality.vtQualityRange
+                    let value = model.compressQuality.vtQuality ?? profile.quality
+                    Text("Quality \(value)").font(.system(size: 12, weight: .medium, design: .monospaced))
+                    Slider(value: Binding(get: { Double(value) }, set: { model.compressQuality.vtQuality = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
+                    Text("Higher quality: better picture, bigger file. Default \(profile.quality).").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            case .targetSize:
+                HStack(spacing: 8) {
+                    TextField("GB", value: $model.compressQuality.targetGB, format: .number.precision(.fractionLength(0...1)))
+                        .textFieldStyle(.roundedBorder).frame(width: 80)
+                    Stepper("GB", value: $model.compressQuality.targetGB, in: CompressQuality.targetGBRange, step: 0.5)
+                }
+                Text(encoder == .software ? "Two-pass x265 at the bitrate that fills this size. Audio is included." : "VideoToolbox at the bitrate that fills this size. Audio is included.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(16).frame(width: 300)
+        .onChange(of: model.compressQuality.targetGB) { _, value in
+            let clamped = min(max(value, CompressQuality.targetGBRange.lowerBound), CompressQuality.targetGBRange.upperBound)
+            if clamped != value { model.compressQuality.targetGB = clamped }
+        }
     }
 }
 struct AboutView: View {

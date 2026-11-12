@@ -3,6 +3,8 @@
 
 import Foundation
 
+private final class PipeDataBox: @unchecked Sendable { var data = Data() }
+
 struct BluRayMount: Sendable, Equatable {
     var isoURL: URL
     var mountPoint: URL
@@ -13,6 +15,7 @@ struct BluRayMount: Sendable, Equatable {
     /// The remaining clips of the main title, in playback order (appended to `mediaURL` with `+`).
     var extraParts: [URL] = []
     var inputBytes: Int64
+    var isDVD = false
 }
 
 enum BluRayISO {
@@ -89,26 +92,56 @@ enum BluRayISO {
         let attached = try parseAttachOutput(data, isoName: iso.lastPathComponent)
         let device = attached.device
         let mountPoint = attached.mountPoint
-        let layout = try classifyVolume(at: mountPoint)
-        switch layout {
-        case .dvd:
+        let layout = classifyVolume(at: mountPoint)
+        let clips: [URL]
+        do {
+            switch layout {
+            case .unknown:
+                throw MuxError.message("Unrecognized disc image.")
+            case .dvd:
+                clips = try dvdMainTitle(under: mountPoint)
+                if clips.isEmpty { throw MuxError.message("No DVD title was found on this disc image.") }
+            case .bluRay:
+                clips = try mainClips(under: mountPoint)
+                if clips.isEmpty { throw MuxError.message("No Blu-ray playlist or feature file was found on this disc image.") }
+            }
+        } catch {
             detachDevice(device)
-            throw MuxError.message("DVD ISO images are not supported yet.")
-        case .unknown:
-            detachDevice(device)
-            throw MuxError.message("Unrecognized disc image.")
-        case .bluRay:
-            break
+            throw error
         }
+        let clipBytes = clips.reduce(Int64(0)) { $0 + fileBytes($1) }
         let isoBytes = (try? iso.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-        let clips = try mainClips(under: mountPoint)
-        guard let mediaURL = clips.first else {
-            detachDevice(device)
-            throw MuxError.message("No Blu-ray playlist or feature file was found on this disc image.")
-        }
-        let mount = BluRayMount(isoURL: iso, mountPoint: mountPoint, device: device, mediaURL: mediaURL, extraParts: Array(clips.dropFirst()), inputBytes: isoBytes)
+        let mount = BluRayMount(isoURL: iso, mountPoint: mountPoint, device: device, mediaURL: clips[0], extraParts: Array(clips.dropFirst()), inputBytes: clipBytes > 0 ? clipBytes : isoBytes, isDVD: layout == .dvd)
         remember(mount)
         return mount
+    }
+
+    private static func fileBytes(_ url: URL) -> Int64 {
+        (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+    }
+
+    /// The VOB files of the largest DVD title set (`VTS_nn_1.VOB`, `VTS_nn_2.VOB`, …) in order; `VTS_nn_0.VOB` is the menu.
+    static func dvdMainTitle(under mount: URL) throws -> [URL] {
+        guard let videoTS = childDirectory(named: "VIDEO_TS", in: mount) else { return [] }
+        let entries = try fm.contentsOfDirectory(at: videoTS, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles])
+        var titleSets: [Int: [(part: Int, url: URL, bytes: Int64)]] = [:]
+        for url in entries {
+            let name = url.lastPathComponent.uppercased()
+            guard name.hasPrefix("VTS_"), name.hasSuffix(".VOB") else { continue }
+            let fields = name.dropFirst(4).dropLast(4).split(separator: "_")
+            guard fields.count == 2, let title = Int(fields[0]), let part = Int(fields[1]), part >= 1 else { continue }
+            titleSets[title, default: []].append((part, url, fileBytes(url)))
+        }
+        let best = titleSets.max { lhs, rhs in
+            let l = lhs.value.reduce(Int64(0)) { $0 + $1.bytes }, r = rhs.value.reduce(Int64(0)) { $0 + $1.bytes }
+            return l != r ? l < r : lhs.key > rhs.key
+        }
+        return best?.value.sorted { $0.part < $1.part }.map(\.url) ?? []
+    }
+
+    private static func childDirectory(named name: String, in folder: URL) -> URL? {
+        guard let entries = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return nil }
+        return entries.first { $0.lastPathComponent.uppercased() == name }
     }
 
     /// `hdiutil attach -plist` prints a dictionary whose `system-entities` array lists the whole disk and
@@ -136,11 +169,11 @@ enum BluRayISO {
 
     private enum VolumeKind { case bluRay, dvd, unknown }
 
-    private static func classifyVolume(at mount: URL) throws -> VolumeKind {
+    private static func classifyVolume(at mount: URL) -> VolumeKind {
         let bdmv = mount.appendingPathComponent("BDMV")
         let stream = bdmv.appendingPathComponent("STREAM")
         if fm.fileExists(atPath: stream.path) { return .bluRay }
-        if fm.fileExists(atPath: mount.appendingPathComponent("VIDEO_TS").path) { return .dvd }
+        if childDirectory(named: "VIDEO_TS", in: mount) != nil { return .dvd }
         return .unknown
     }
 
@@ -164,9 +197,18 @@ enum BluRayISO {
         process.standardError = err
         process.standardInput = FileHandle.nullDevice
         try process.run()
-        process.waitUntilExit()
+        // Drain both pipes before waiting: a child blocked on a full pipe never exits.
+        let errorBox = PipeDataBox()
+        let errorRead = DispatchGroup()
+        errorRead.enter()
+        DispatchQueue.global(qos: .utility).async {
+            errorBox.data = err.fileHandleForReading.readDataToEndOfFile()
+            errorRead.leave()
+        }
         let output = out.fileHandleForReading.readDataToEndOfFile()
-        let errorText = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        errorRead.wait()
+        process.waitUntilExit()
+        let errorText = String(decoding: errorBox.data, as: UTF8.self)
         guard process.terminationStatus == 0 else {
             let detail = errorText.trimmingCharacters(in: .whitespacesAndNewlines)
             throw MuxError.message(detail.isEmpty ? "hdiutil failed." : detail)

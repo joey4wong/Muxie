@@ -36,7 +36,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         let model = AppModel()
         await model.importFiles([video])
         try check(model.sources.count == 1 && model.tracks.count == 2, "MP4 import & video/audio identification")
-        try check(model.enabled.isEmpty && model.selected == nil && !model.canExport, "Imported tracks are unchecked with no focused row")
+        try check(model.enabled.map(\.kind) == ["video", "audio"] && model.selected == nil && model.canExport, "Opened video auto-checks its video and best audio with no focused row")
         try check(model.tracks.map { model.displayName(for: $0) } == ["Video", "Audio"] && model.tracks.allSatisfy { $0.name.isEmpty }, "Unnamed tracks use generic labels without writing metadata")
         for track in model.tracks { model.boolBinding(track.id, \.enabled).wrappedValue = true }
         let sizing = AppModel(); sizing.sources = model.sources; sizing.workspaceScreenHeight = 800
@@ -146,7 +146,7 @@ final class ProgressWitness: @unchecked Sendable { let lock = NSLock(); private 
         // Every audio track unchecked: a video-only compressed output is valid, not a verification failure.
         let silentCompress = AppModel()
         await silentCompress.importFiles([video])
-        for track in silentCompress.tracks where track.kind == "video" { silentCompress.boolBinding(track.id, \.enabled).wrappedValue = true }
+        for track in silentCompress.tracks { silentCompress.boolBinding(track.id, \.enabled).wrappedValue = track.kind == "video" }
         silentCompress.exportMode = .compress
         let silentCompressURL = run.appendingPathComponent("H.265 compress no audio.mkv")
         await silentCompress.export(to: silentCompressURL)
