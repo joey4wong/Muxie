@@ -17,7 +17,12 @@ OUT_DIR="$OUT" "$ROOT/build.sh"
 SIGN_UPDATE="$(ls -d "$ROOT"/.build/Sparkle-*/bin/sign_update | tail -1)"
 ZIP="$OUT/Muxie-$VERSION.zip"
 ditto -c -k --sequesterRsrc --keepParent "$OUT/Muxie.app" "$ZIP"
-SIGNATURE="$("$SIGN_UPDATE" "$ZIP")"   # prints: sparkle:edSignature="..." length="..."
+# CI passes the private key as a file (SPARKLE_ED_KEY_FILE); locally sign_update reads the login Keychain.
+if [[ -n "${SPARKLE_ED_KEY_FILE:-}" ]]; then
+  SIGNATURE="$("$SIGN_UPDATE" --ed-key-file "$SPARKLE_ED_KEY_FILE" "$ZIP")"
+else
+  SIGNATURE="$("$SIGN_UPDATE" "$ZIP")"   # prints: sparkle:edSignature="..." length="..."
+fi
 URL_BASE="${DOWNLOAD_URL_BASE:-https://github.com/$REPO/releases/download/v$VERSION}"
 cat > "$OUT/appcast.xml" <<XML
 <?xml version="1.0" encoding="utf-8"?>

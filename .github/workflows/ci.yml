@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .build/Sparkle-*
+            .build/MKVToolNix-*
+            .build/HandBrake*
+          key: deps-${{ hashFiles('build.sh') }}
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+      - name: Build
+        run: ./build.sh
+      - name: Test
+        run: ./test.sh
