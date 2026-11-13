@@ -11,6 +11,9 @@ import AppKit
     var body: some Scene {
         Window("Muxie", id: "main") {
             ContentView().environmentObject(model)
+                .preferredColorScheme(.dark)
+                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                .containerBackground(.clear, for: .window)
                 .frame(minWidth: model.sources.isEmpty && model.queueJobs.isEmpty ? 380 : 560, idealWidth: 760, minHeight: model.minimumContentHeight, idealHeight: 520)
                 .onAppear { delegate.bind(model) }
                 .onOpenURL { url in Task { await model.importFiles([url]) } }

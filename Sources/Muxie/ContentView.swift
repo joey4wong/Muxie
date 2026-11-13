@@ -21,6 +21,7 @@ struct NeutralGlassButtonStyle: ButtonStyle {
     }
 }
 /// A faint graphite backdrop with a muted gray-green glow, so glass has something to refract instead of a flat fill.
+/// Used as the fallback when the system asks for reduced transparency.
 private struct GlassBackdrop: View {
     var body: some View {
         ZStack {
@@ -28,6 +29,55 @@ private struct GlassBackdrop: View {
             RadialGradient(colors: [accent.opacity(0.30), .clear], center: .topLeading, startRadius: 0, endRadius: 520)
             RadialGradient(colors: [accent.opacity(0.20), .clear], center: .bottomTrailing, startRadius: 0, endRadius: 480)
         }.ignoresSafeArea()
+    }
+}
+/// Behind-window blur: the desktop shows through, heavily blurred, under a smoky graphite tint.
+private struct BehindWindowBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .behindWindow
+        view.material = .hudWindow
+        view.state = .active  // stay frosted when the window is not key
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+/// Makes the hosting window transparent so the behind-window blur reaches the title bar.
+private struct TransparentWindow: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.titlebarAppearsTransparent = true
+            window.styleMask.insert(.fullSizeContentView)
+        }
+        return view
+    }
+    func updateNSView(_ view: NSView, context: Context) {}
+}
+private struct FrostedBackdrop: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    var body: some View {
+        Group {
+            if reduceTransparency { GlassBackdrop() }
+            else {
+                ZStack {
+                    BehindWindowBlur()
+                    Color.black.opacity(0.38)
+                }.ignoresSafeArea()
+            }
+        }.background(TransparentWindow())
+    }
+}
+/// The one high-contrast control on screen: solid white with dark text.
+struct PrimarySolidButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.foregroundStyle(Color.black.opacity(enabled ? 0.9 : 0.4))
+            .background(Capsule().fill(Color.white.opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.35)))
+            .shadow(color: .black.opacity(enabled ? 0.25 : 0), radius: 8, y: 3)
     }
 }
 struct ContentView: View {
@@ -41,36 +91,41 @@ struct ContentView: View {
             if model.sources.isEmpty {
                 emptyState
             } else {
-                let compactInspector = geometry.size.width < 720 || geometry.size.height - WorkspaceLayout.exportHeight - WorkspaceLayout.activityHeight < 400
-                VStack(spacing: 0) {
-                    HStack(alignment: .top, spacing: 0) {
+                // The inspector is a full-height side panel (first track row down to the window bottom).
+                // Only a narrow window, or one too short for this track's fields, falls back to the sheet.
+                let sidePanelHeight = geometry.size.height - WorkspaceLayout.inspectorTopInset - 14
+                let compactInspector = geometry.size.width < 720 || sidePanelHeight < WorkspaceLayout.inspectorHeight(kind: model.active?.kind)
+                HStack(alignment: .top, spacing: 0) {
+                    VStack(spacing: 0) {
                         trackList(compact: compactInspector)
                             .frame(maxWidth: .infinity, alignment: .top)
-                        if model.active != nil && !compactInspector {
-                            inspector.frame(width: 238)
-                                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
-                                .padding(.trailing, 14).padding(.top, WorkspaceLayout.inspectorTopInset).padding(.bottom, WorkspaceLayout.listInsets / 2)
+                            .frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
+                        VStack(spacing: 24) {
+                            modeSwitch.disabled(model.importing)
+                            Button { model.exportPanel() } label: {
+                                Text("Export").font(.system(size: 16, weight: .semibold))
+                                    .frame(width: 150, height: 42)
+                            }
+                                .buttonStyle(PrimarySolidButtonStyle())
+                                .disabled(!model.canExport)
                         }
-                    }.frame(minHeight: model.minimumTrackSectionHeight, maxHeight: .infinity, alignment: .top)
-                    VStack(spacing: 24) {
-                        modeSwitch.disabled(model.importing)
-                        Button { model.exportPanel() } label: {
-                            Text("Export").font(.system(size: 16, weight: .semibold))
-                                .frame(width: 150, height: 42)
-                        }
-                            .buttonStyle(NeutralGlassButtonStyle(compact: false, padded: false))
-                            .disabled(!model.canExport)
+                        .frame(height: WorkspaceLayout.exportHeight)
+                        Group {
+                            if model.importing || model.completed != nil { activityBar }
+                            else { Color.clear }
+                        }.frame(height: WorkspaceLayout.activityHeight)
                     }
-                    .frame(height: WorkspaceLayout.exportHeight)
-                    Group {
-                        if model.importing || model.completed != nil { activityBar }
-                        else { Color.clear }
-                    }.frame(height: WorkspaceLayout.activityHeight)
+                    if model.active != nil && !compactInspector {
+                        inspector.frame(width: 238)
+                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
+                            .padding(.trailing, 14).padding(.top, WorkspaceLayout.inspectorTopInset).padding(.bottom, 14)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
                 }
 
             }
         }
-        .background(GlassBackdrop())
+        .background(FrostedBackdrop())
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
                 if model.queueResumePending {
@@ -139,34 +194,8 @@ struct ContentView: View {
     }
     /// One glass capsule holding both modes; a glass indicator slides between them.
     private var modeSwitch: some View {
-        let modes = model.compressEligible ? ExportMode.allCases : [.mux]
-        let index = CGFloat(modes.firstIndex(of: model.exportMode) ?? 0)
-        let segmentWidth: CGFloat = 104, segmentHeight: CGFloat = 32, inset: CGFloat = 4
-        return GlassEffectContainer(spacing: 0) {
-            ZStack(alignment: .leading) {
-                Capsule().fill(.clear)
-                    .frame(width: segmentWidth * CGFloat(modes.count) + inset * 2, height: segmentHeight + inset * 2)
-                    .glassEffect(.regular, in: Capsule())
-                Capsule().fill(.clear)
-                    .frame(width: segmentWidth, height: segmentHeight)
-                    .glassEffect(.clear.interactive(), in: Capsule())
-                    .offset(x: inset + index * segmentWidth)
-            }
-        }
-        // Labels sit outside the glass container so the lens never refracts or fades them.
-        .overlay(alignment: .leading) {
-            HStack(spacing: 0) {
-                ForEach(modes) { mode in
-                    Button { withAnimation(.spring(duration: 0.4, bounce: 0.28)) { model.exportMode = mode } } label: {
-                        Text(mode.label)
-                            .font(.system(size: 13, weight: model.exportMode == mode ? .semibold : .regular))
-                            .foregroundStyle(.primary)
-                            .frame(width: segmentWidth, height: segmentHeight)
-                            .contentShape(Capsule())
-                    }.buttonStyle(.plain)
-                }
-            }.padding(.leading, inset)
-        }
+        GlassSegmented(options: model.compressEligible ? ExportMode.allCases : [.mux], label: \.label,
+                       selection: Binding(get: { model.exportMode }, set: { model.exportMode = $0 }), segmentWidth: 104)
     }
     private var emptyState: some View {
         VStack(spacing: 24) {
@@ -301,15 +330,54 @@ struct ContentView: View {
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 15)).padding(.horizontal, 12)
     }
 }
+/// Liquid Glass segmented control: a glass track with a clear, interactive glass thumb that slides to the selection.
+struct GlassSegmented<Option: Hashable>: View {
+    let options: [Option]
+    let label: (Option) -> String
+    @Binding var selection: Option
+    var segmentWidth: CGFloat = 104
+    var segmentHeight: CGFloat = 32
+    init(options: [Option], label: KeyPath<Option, String>, selection: Binding<Option>, segmentWidth: CGFloat = 104, segmentHeight: CGFloat = 32) {
+        self.options = options; self.label = { $0[keyPath: label] }; self._selection = selection
+        self.segmentWidth = segmentWidth; self.segmentHeight = segmentHeight
+    }
+    private let inset: CGFloat = 4
+    var body: some View {
+        let index = CGFloat(options.firstIndex(of: selection) ?? 0)
+        GlassEffectContainer(spacing: 0) {
+            ZStack(alignment: .leading) {
+                Capsule().fill(.clear)
+                    .frame(width: segmentWidth * CGFloat(options.count) + inset * 2, height: segmentHeight + inset * 2)
+                    .glassEffect(.regular, in: Capsule())
+                Capsule().fill(.clear)
+                    .frame(width: segmentWidth, height: segmentHeight)
+                    .glassEffect(.clear.interactive(), in: Capsule())
+                    .offset(x: inset + index * segmentWidth)
+            }
+        }
+        // Labels sit outside the glass container so the lens never refracts or fades them.
+        .overlay(alignment: .leading) {
+            HStack(spacing: 0) {
+                ForEach(options, id: \.self) { option in
+                    Button { withAnimation(.spring(duration: 0.4, bounce: 0.28)) { selection = option } } label: {
+                        Text(label(option))
+                            .font(.system(size: 13, weight: selection == option ? .semibold : .regular))
+                            .foregroundStyle(selection == option ? Color.primary : Color.secondary)
+                            .frame(width: segmentWidth, height: segmentHeight)
+                            .contentShape(Capsule())
+                    }.buttonStyle(.plain)
+                }
+            }.padding(.leading, inset)
+        }
+    }
+}
 struct CompressQualityPanel: View {
     @EnvironmentObject var model: AppModel
     let encoder: CompressEncoder
     var body: some View {
         let profile = model.compressProfile
         VStack(alignment: .leading, spacing: 14) {
-            Picker("Rate", selection: $model.compressQuality.mode) {
-                ForEach(CompressRateMode.allCases) { mode in Text(mode.label).tag(mode) }
-            }.pickerStyle(.segmented).labelsHidden()
+            GlassSegmented(options: CompressRateMode.allCases, label: \.label, selection: $model.compressQuality.mode, segmentWidth: 88, segmentHeight: 30)
             switch model.compressQuality.mode {
             case .standard:
                 Text(encoder == .software ? "x265 RF \(profile.rf), tuned for this resolution." : "VideoToolbox quality \(profile.quality), tuned for this resolution.")
@@ -319,20 +387,28 @@ struct CompressQualityPanel: View {
                     let range = CompressQuality.x265RFRange
                     let value = model.compressQuality.x265RF ?? profile.rf
                     Text("RF \(value)").font(.system(size: 12, weight: .medium, design: .monospaced))
-                    Slider(value: Binding(get: { Double(value) }, set: { model.compressQuality.x265RF = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
+                    Slider(value: Binding(get: { Double(value) }, set: { model.compressQuality.x265RF = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound), step: 1).tint(Color.white.opacity(0.75))
                     Text("Lower RF: better picture, bigger file. Default \(profile.rf).").font(.system(size: 11)).foregroundStyle(.secondary)
                 } else {
                     let range = CompressQuality.vtQualityRange
                     let value = model.compressQuality.vtQuality ?? profile.quality
                     Text("Quality \(value)").font(.system(size: 12, weight: .medium, design: .monospaced))
-                    Slider(value: Binding(get: { Double(value) }, set: { model.compressQuality.vtQuality = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
+                    Slider(value: Binding(get: { Double(value) }, set: { model.compressQuality.vtQuality = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound), step: 1).tint(Color.white.opacity(0.75))
                     Text("Higher quality: better picture, bigger file. Default \(profile.quality).").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             case .targetSize:
                 HStack(spacing: 8) {
                     TextField("GB", value: $model.compressQuality.targetGB, format: .number.precision(.fractionLength(0...1)))
-                        .textFieldStyle(.roundedBorder).frame(width: 80)
-                    Stepper("GB", value: $model.compressQuality.targetGB, in: CompressQuality.targetGBRange, step: 0.5)
+                        .textFieldStyle(.plain).multilineTextAlignment(.center).font(.system(size: 13, design: .monospaced))
+                        .frame(width: 64).padding(.vertical, 6).glassEffect(.regular, in: Capsule())
+                    Text("GB").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button { model.compressQuality.targetGB = max(CompressQuality.targetGBRange.lowerBound, model.compressQuality.targetGB - 0.5) } label: {
+                        Image(systemName: "minus").frame(width: 14, height: 14)
+                    }.buttonStyle(NeutralGlassButtonStyle()).help("Decrease by 0.5 GB")
+                    Button { model.compressQuality.targetGB = min(CompressQuality.targetGBRange.upperBound, model.compressQuality.targetGB + 0.5) } label: {
+                        Image(systemName: "plus").frame(width: 14, height: 14)
+                    }.buttonStyle(NeutralGlassButtonStyle()).help("Increase by 0.5 GB")
                 }
                 Text(encoder == .software ? "Two-pass x265 at the bitrate that fills this size. Audio is included." : "VideoToolbox at the bitrate that fills this size. Audio is included.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
